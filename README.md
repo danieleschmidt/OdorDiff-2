@@ -317,9 +317,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 ```bibtex
 @software{odordiff2-2025,
   title={OdorDiff-2: Safe Text-to-Scent Molecule Diffusion},
-  author={Your Name and Collaborators},
+  author={Daniel Schmidt},
   year={2025},
-  url={https://github.com/yourusername/odordiff-2}
+  url={https://github.com/danieleschmidt/odordiff-2}
 }
 
 @article{generative-scent-2025,
