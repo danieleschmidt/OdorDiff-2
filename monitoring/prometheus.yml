@@ -1,0 +1,56 @@
+# Prometheus configuration for OdorDiff-2 monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # OdorDiff-2 API metrics
+  - job_name: 'odordiff2-api'
+    static_configs:
+      - targets: ['odordiff2-api:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Dashboard metrics
+  - job_name: 'odordiff2-dashboard'
+    static_configs:
+      - targets: ['odordiff2-dashboard:8050']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # System metrics (if node_exporter is added)
+  # - job_name: 'node'
+  #   static_configs:
+  #     - targets: ['node-exporter:9100']
+
+  # Redis metrics (if redis_exporter is added)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+
+  # PostgreSQL metrics (if postgres_exporter is added)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+
+  # Nginx metrics (if nginx_exporter is added)
+  # - job_name: 'nginx'
+  #   static_configs:
+  #     - targets: ['nginx-exporter:9113']
+
+# Alerting configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
