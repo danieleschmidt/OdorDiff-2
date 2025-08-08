@@ -1,0 +1,321 @@
+{
+  "code_structure": {
+    "file_distribution": {
+      "root": {
+        "files": 2,
+        "lines": 697
+      },
+      "odordiff2": {
+        "files": 26,
+        "lines": 7429
+      },
+      "tests": {
+        "files": 7,
+        "lines": 2887
+      }
+    },
+    "total_python_files": 35,
+    "total_lines_of_code": 11013,
+    "key_files_present": {
+      "pyproject.toml": true,
+      "requirements.txt": true,
+      "README.md": true,
+      "LICENSE": true,
+      "Dockerfile": true,
+      ".gitignore": true
+    }
+  },
+  "security_analysis": {
+    "potential_vulnerabilities": [
+      {
+        "file": "quality_check.py",
+        "pattern": "eval\\s*\\(",
+        "description": "Potential code injection via eval()",
+        "matches": 1
+      },
+      {
+        "file": "quality_check.py",
+        "pattern": "exec\\s*\\(",
+        "description": "Potential code injection via exec()",
+        "matches": 1
+      },
+      {
+        "file": "quality_check.py",
+        "pattern": "shell=True",
+        "description": "Potential command injection via shell=True",
+        "matches": 2
+      },
+      {
+        "file": "tests/test_api_security.py",
+        "pattern": "eval\\s*\\(",
+        "description": "Potential code injection via eval()",
+        "matches": 2
+      },
+      {
+        "file": "tests/test_api_security.py",
+        "pattern": "exec\\s*\\(",
+        "description": "Potential code injection via exec()",
+        "matches": 1
+      },
+      {
+        "file": "odordiff2/data/cache.py",
+        "pattern": "pickle\\.loads?",
+        "description": "Unsafe pickle deserialization",
+        "matches": 1
+      }
+    ],
+    "security_features_implemented": [
+      "authentication",
+      "rate_limiting",
+      "sql_injection_protection",
+      "xss_protection",
+      "encryption",
+      "input_validation",
+      "csrf_protection"
+    ],
+    "recommendations": [],
+    "security_score": 100.0
+  },
+  "performance_analysis": {
+    "async_usage": 71,
+    "caching_implementation": true,
+    "performance_monitoring": true,
+    "optimization_features": [
+      "multiprocess",
+      "threading",
+      "pool",
+      "batch",
+      "concurrent"
+    ]
+  },
+  "documentation": {
+    "readme_present": true,
+    "docstring_coverage": 87.59398496240601,
+    "api_documentation": true,
+    "inline_comments": 827,
+    "total_functions": 532,
+    "documented_functions": 466
+  },
+  "test_coverage": {
+    "test_files_found": 6,
+    "test_functions_count": 141,
+    "test_categories": {
+      "unit": 5,
+      "integration": 4,
+      "performance": 7,
+      "security": 6
+    },
+    "estimated_coverage": 26.50375939849624
+  },
+  "code_quality": {
+    "complexity_analysis": {
+      "average_complexity": 55.94285714285714,
+      "total_files_analyzed": 35
+    },
+    "code_smells": [
+      {
+        "file": "quality_check.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/cli.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "tests/conftest.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "tests/test_core_diffusion.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Long function detected"
+        ]
+      },
+      {
+        "file": "tests/test_api_security.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Long function detected",
+          "Long function detected",
+          "Long function detected"
+        ]
+      },
+      {
+        "file": "odordiff2/api/endpoints.py",
+        "smells": [
+          "Long function detected"
+        ]
+      },
+      {
+        "file": "odordiff2/api/secure_endpoints.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/core/async_diffusion.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/core/diffusion.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/core/synthesis.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/data/cache.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/models/molecule.py",
+        "smells": [
+          "Long function detected"
+        ]
+      },
+      {
+        "file": "odordiff2/safety/filter.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/utils/logging.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/utils/validation.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/utils/error_handling.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/utils/security.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/visualization/dashboard.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/visualization/viewer.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/monitoring/performance.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "odordiff2/monitoring/metrics.py",
+        "smells": [
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "tests/performance/test_benchmarks.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Long function detected",
+          "Long function detected"
+        ]
+      },
+      {
+        "file": "tests/safety/test_security_validation.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected",
+          "Deep nesting detected"
+        ]
+      },
+      {
+        "file": "tests/unit/test_molecule.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected"
+        ]
+      },
+      {
+        "file": "tests/unit/test_safety_filter.py",
+        "smells": [
+          "Long function detected",
+          "Long function detected"
+        ]
+      }
+    ],
+    "best_practices": {
+      "type_hints": 20,
+      "error_handling": 19,
+      "logging_usage": 15
+    }
+  },
+  "dependencies": {
+    "requirements_files": [
+      "requirements.txt",
+      "pyproject.toml",
+      "setup.py"
+    ],
+    "dependency_count": 336,
+    "security_analysis": {}
+  }
+}
