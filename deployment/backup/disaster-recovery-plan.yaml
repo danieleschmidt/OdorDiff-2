@@ -1,0 +1,527 @@
+# Disaster Recovery Procedures and Automation for OdorDiff-2
+# Comprehensive DR plan with automated recovery workflows
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: disaster-recovery-procedures
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: procedures
+data:
+  recovery-procedures.md: |
+    # OdorDiff-2 Disaster Recovery Procedures
+    
+    ## Recovery Time Objectives (RTO) and Recovery Point Objectives (RPO)
+    
+    | Component | RTO | RPO | Priority |
+    |-----------|-----|-----|----------|
+    | API Services | 15 minutes | 30 minutes | Critical |
+    | Database | 30 minutes | 15 minutes | Critical |
+    | Cache (Redis) | 10 minutes | 1 hour | High |
+    | ML Models | 45 minutes | 4 hours | High |
+    | Monitoring | 20 minutes | 2 hours | Medium |
+    
+    ## Disaster Scenarios and Recovery Procedures
+    
+    ### 1. Database Failure
+    - **Detection**: Automated monitoring alerts
+    - **Recovery Steps**:
+      1. Assess extent of failure
+      2. Stop all write operations
+      3. Restore from latest backup
+      4. Verify data integrity
+      5. Resume operations
+    
+    ### 2. Complete Cluster Failure
+    - **Detection**: Kubernetes cluster health checks
+    - **Recovery Steps**:
+      1. Provision new cluster
+      2. Restore from Velero backups
+      3. Update DNS and load balancers
+      4. Run integration tests
+      5. Resume traffic
+    
+    ### 3. Regional Outage
+    - **Detection**: Multi-region health checks
+    - **Recovery Steps**:
+      1. Failover to backup region
+      2. Restore from cross-region backups
+      3. Update global load balancer
+      4. Monitor performance
+      5. Plan primary region recovery
+
+  automated-recovery.sh: |
+    #!/bin/bash
+    # Automated Recovery Script for OdorDiff-2
+    set -euo pipefail
+    
+    # Configuration
+    NAMESPACE="odordiff"
+    BACKUP_NAMESPACE="backup-system"
+    RECOVERY_TYPE="${1:-full}"
+    BACKUP_NAME="${2:-latest}"
+    
+    log() {
+        echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+    }
+    
+    check_prerequisites() {
+        log "Checking prerequisites..."
+        kubectl version --client
+        velero version --client-only
+        aws --version
+    }
+    
+    restore_database() {
+        log "Starting database recovery..."
+        
+        # Scale down API to prevent writes
+        kubectl scale deployment odordiff-api -n ${NAMESPACE} --replicas=0
+        
+        # Find latest backup
+        if [[ "${BACKUP_NAME}" == "latest" ]]; then
+            BACKUP_NAME=$(aws s3 ls s3://odordiff-database-backups/dumps/ --recursive | \
+                         sort | tail -n 1 | awk '{print $4}' | xargs basename)
+        fi
+        
+        # Download and restore backup
+        aws s3 cp "s3://odordiff-database-backups/dumps/${BACKUP_NAME}" /tmp/
+        
+        kubectl exec -n ${NAMESPACE} deployment/postgres -- \
+            pg_restore -U odordiff -d odordiff -c --if-exists "/tmp/${BACKUP_NAME}"
+        
+        log "Database recovery completed"
+    }
+    
+    restore_application() {
+        log "Starting application recovery..."
+        
+        if [[ "${BACKUP_NAME}" == "latest" ]]; then
+            VELERO_BACKUP=$(velero backup get --output json | \
+                           jq -r '.items | sort_by(.metadata.creationTimestamp) | .[-1].metadata.name')
+        else
+            VELERO_BACKUP=${BACKUP_NAME}
+        fi
+        
+        # Create restore
+        velero restore create --from-backup ${VELERO_BACKUP} \
+            --include-namespaces ${NAMESPACE} \
+            --wait
+        
+        log "Application recovery completed"
+    }
+    
+    verify_recovery() {
+        log "Verifying recovery..."
+        
+        # Wait for pods to be ready
+        kubectl wait --for=condition=ready pod -l app=odordiff-api -n ${NAMESPACE} --timeout=300s
+        
+        # Run health checks
+        kubectl exec -n ${NAMESPACE} deployment/odordiff-api -- \
+            curl -f http://localhost:8000/health
+        
+        # Run integration tests
+        kubectl run recovery-test --image=odordiff2:latest --rm -i --restart=Never -n ${NAMESPACE} -- \
+            python -m pytest tests/integration/ -v
+        
+        log "Recovery verification completed successfully"
+    }
+    
+    case ${RECOVERY_TYPE} in
+        "database")
+            check_prerequisites
+            restore_database
+            verify_recovery
+            ;;
+        "application")
+            check_prerequisites
+            restore_application
+            verify_recovery
+            ;;
+        "full")
+            check_prerequisites
+            restore_database
+            restore_application
+            verify_recovery
+            ;;
+        *)
+            echo "Usage: $0 {database|application|full} [backup-name]"
+            exit 1
+            ;;
+    esac
+
+---
+# Disaster Recovery Job Template
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: disaster-recovery-job
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: recovery-job
+spec:
+  ttlSecondsAfterFinished: 86400  # Clean up after 24 hours
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: disaster-recovery
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      serviceAccountName: disaster-recovery-service-account
+      restartPolicy: OnFailure
+      containers:
+      - name: recovery-orchestrator
+        image: alpine/k8s:1.28.2
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: RECOVERY_TYPE
+          value: "full"
+        - name: BACKUP_NAME
+          value: "latest"
+        - name: NAMESPACE
+          value: "odordiff"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-backup-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-backup-credentials
+              key: secret-access-key
+        - name: AWS_DEFAULT_REGION
+          value: "us-west-2"
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -euo pipefail
+          
+          log() {
+              echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+          }
+          
+          log "Starting disaster recovery process..."
+          log "Recovery type: ${RECOVERY_TYPE}"
+          log "Backup: ${BACKUP_NAME}"
+          
+          # Install required tools
+          apk add --no-cache aws-cli curl jq
+          
+          # Check cluster status
+          kubectl cluster-info
+          kubectl get nodes
+          
+          # Load recovery procedures
+          kubectl get configmap disaster-recovery-procedures -n backup-system \
+            -o jsonpath='{.data.automated-recovery\.sh}' > /tmp/recovery.sh
+          chmod +x /tmp/recovery.sh
+          
+          # Execute recovery
+          /tmp/recovery.sh "${RECOVERY_TYPE}" "${BACKUP_NAME}"
+          
+          log "Disaster recovery completed successfully"
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: recovery-scripts
+          mountPath: /recovery-scripts
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: recovery-scripts
+        configMap:
+          name: disaster-recovery-procedures
+          defaultMode: 0755
+
+---
+# Service Account for Disaster Recovery
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: disaster-recovery-service-account
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: service-account
+
+---
+# RBAC for Disaster Recovery
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: disaster-recovery-role
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: rbac
+rules:
+# Full access to managed namespaces
+- apiGroups: [""]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["apps"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["batch"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["autoscaling"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["argoproj.io"]
+  resources: ["*"]
+  verbs: ["*"]
+- apiGroups: ["velero.io"]
+  resources: ["*"]
+  verbs: ["*"]
+# Read access to cluster resources
+- apiGroups: [""]
+  resources: ["nodes", "persistentvolumes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["storage.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: disaster-recovery-binding
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: disaster-recovery-role
+subjects:
+- kind: ServiceAccount
+  name: disaster-recovery-service-account
+  namespace: backup-system
+
+---
+# Monitoring and Alerting for DR
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: disaster-recovery-alerts
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+  - name: disaster-recovery.rules
+    interval: 60s
+    rules:
+    - alert: BackupJobFailed
+      expr: increase(kube_job_status_failed{namespace="backup-system"}[1h]) > 0
+      for: 5m
+      labels:
+        severity: critical
+        category: backup
+      annotations:
+        summary: "Backup job failed"
+        description: "Backup job {{ $labels.job_name }} has failed"
+        runbook_url: "https://odordiff.ai/runbooks/backup-failure"
+
+    - alert: BackupJobMissing
+      expr: time() - kube_job_status_completion_time{namespace="backup-system"} > 86400
+      for: 10m
+      labels:
+        severity: warning
+        category: backup
+      annotations:
+        summary: "Backup job overdue"
+        description: "Backup job {{ $labels.job_name }} has not completed in 24 hours"
+        
+    - alert: VeleroBackupFailed
+      expr: increase(velero_backup_failure_total[1h]) > 0
+      for: 5m
+      labels:
+        severity: critical
+        category: backup
+      annotations:
+        summary: "Velero backup failed"
+        description: "Velero backup has failed {{ $value }} times in the last hour"
+
+    - alert: CrossRegionSyncFailed
+      expr: increase(kube_job_status_failed{job_name=~"cross-region-backup-sync.*"}[1h]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        category: backup
+      annotations:
+        summary: "Cross-region backup sync failed"
+        description: "Cross-region backup synchronization has failed"
+
+    - alert: BackupStorageSpaceRunningLow
+      expr: aws_s3_bucket_size_bytes / aws_s3_bucket_quota_bytes > 0.8
+      for: 30m
+      labels:
+        severity: warning
+        category: backup
+      annotations:
+        summary: "Backup storage space running low"
+        description: "Backup storage is {{ printf \"%.1f\" $value }}% full"
+
+---
+# Disaster Recovery Testing Schedule
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dr-test-schedule
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: disaster-recovery
+    app.kubernetes.io/component: testing
+spec:
+  schedule: "0 4 * * 6"  # Weekly on Saturday at 4 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: dr-test
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          serviceAccountName: disaster-recovery-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: dr-test-runner
+            image: alpine/k8s:1.28.2
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: TEST_NAMESPACE
+              value: "odordiff-dr-test"
+            - name: SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: slack-webhook-url
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              
+              log() {
+                  echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1"
+              }
+              
+              notify_slack() {
+                  local message="$1"
+                  local color="${2:-#36a64f}"
+                  
+                  curl -X POST "${SLACK_WEBHOOK_URL}" \
+                    -H 'Content-type: application/json' \
+                    --data "{\"attachments\":[{\"color\":\"${color}\",\"text\":\"${message}\"}]}"
+              }
+              
+              log "Starting DR test execution..."
+              
+              # Install required tools
+              apk add --no-cache curl jq
+              
+              # Create test namespace
+              kubectl create namespace ${TEST_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -
+              
+              # Test backup restore to test namespace
+              LATEST_BACKUP=$(kubectl get backups -n backup-system --sort-by='.metadata.creationTimestamp' -o jsonpath='{.items[-1].metadata.name}')
+              
+              log "Testing restore from backup: ${LATEST_BACKUP}"
+              
+              # Create restore
+              cat <<EOF | kubectl apply -f -
+              apiVersion: velero.io/v1
+              kind: Restore
+              metadata:
+                name: dr-test-$(date +%s)
+                namespace: backup-system
+              spec:
+                backupName: ${LATEST_BACKUP}
+                includedNamespaces:
+                - odordiff
+                namespaceMapping:
+                  odordiff: ${TEST_NAMESPACE}
+                restorePVs: false
+              EOF
+              
+              # Wait for restore to complete
+              sleep 60
+              
+              # Verify restore
+              kubectl wait --for=condition=ready pod -l app=odordiff-api -n ${TEST_NAMESPACE} --timeout=300s
+              
+              # Test API health
+              kubectl port-forward -n ${TEST_NAMESPACE} deployment/odordiff-api 8080:8000 &
+              PF_PID=$!
+              sleep 10
+              
+              if curl -f http://localhost:8080/health; then
+                log "DR test completed successfully"
+                notify_slack "✅ OdorDiff-2 DR Test PASSED: Backup restore and health check successful"
+              else
+                log "DR test failed: Health check failed"
+                notify_slack "❌ OdorDiff-2 DR Test FAILED: Health check failed after restore" "#ff0000"
+                exit 1
+              fi
+              
+              # Cleanup
+              kill $PF_PID || true
+              kubectl delete namespace ${TEST_NAMESPACE} --ignore-not-found
+              
+              log "DR test cleanup completed"
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 250m
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 500Mi

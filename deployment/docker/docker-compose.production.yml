@@ -1,0 +1,324 @@
+version: '3.8'
+
+# Production-grade Docker Compose for OdorDiff-2
+# Includes all production services with proper configuration
+
+networks:
+  odordiff-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  redis-data:
+    driver: local
+  postgres-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  nginx-certs:
+    driver: local
+  app-logs:
+    driver: local
+
+services:
+  # =============================================================================
+  # Core Application Services
+  # =============================================================================
+  
+  odordiff-api:
+    build:
+      context: ../../
+      dockerfile: deployment/docker/Dockerfile.production
+      args:
+        BUILD_DATE: ${BUILD_DATE:-2025-08-09}
+        VCS_REF: ${VCS_REF:-latest}
+        VERSION: ${VERSION:-1.0.0}
+    image: odordiff2:${VERSION:-latest}
+    container_name: odordiff-api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://odordiff:${POSTGRES_PASSWORD}@postgres:5432/odordiff
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - WORKERS=${WORKERS:-4}
+      - MAX_REQUESTS=${MAX_REQUESTS:-1000}
+      - PROMETHEUS_ENABLED=true
+      - JAEGER_ENABLED=true
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - odordiff-network
+    volumes:
+      - app-logs:/app/logs
+    ports:
+      - "8000"
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+      restart_policy:
+        condition: on-failure
+        max_attempts: 3
+        delay: 10s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Celery Worker for async tasks
+  odordiff-worker:
+    image: odordiff2:${VERSION:-latest}
+    container_name: odordiff-worker
+    restart: unless-stopped
+    command: celery -A odordiff2.scaling.celery_tasks worker --loglevel=info --concurrency=4
+    environment:
+      - DATABASE_URL=postgresql://odordiff:${POSTGRES_PASSWORD}@postgres:5432/odordiff
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - odordiff-network
+    volumes:
+      - app-logs:/app/logs
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 3G
+          cpus: '2.0'
+        reservations:
+          memory: 1.5G
+          cpus: '1.0'
+
+  # Celery Beat for scheduled tasks
+  odordiff-scheduler:
+    image: odordiff2:${VERSION:-latest}
+    container_name: odordiff-scheduler
+    restart: unless-stopped
+    command: celery -A odordiff2.scaling.celery_tasks beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://odordiff:${POSTGRES_PASSWORD}@postgres:5432/odordiff
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - odordiff-network
+    volumes:
+      - app-logs:/app/logs
+
+  # =============================================================================
+  # Infrastructure Services
+  # =============================================================================
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: odordiff-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.production.conf:/etc/nginx/nginx.conf:ro
+      - nginx-certs:/etc/nginx/certs
+      - app-logs:/var/log/nginx
+    depends_on:
+      - odordiff-api
+    networks:
+      - odordiff-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: odordiff-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=odordiff
+      - POSTGRES_USER=odordiff
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ../../scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - odordiff-network
+    ports:
+      - "5432"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odordiff -d odordiff"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: odordiff-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis-data:/data
+    networks:
+      - odordiff-network
+    ports:
+      - "6379"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # =============================================================================
+  # Monitoring and Observability
+  # =============================================================================
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: odordiff-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./prometheus.production.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - odordiff-network
+    ports:
+      - "9090:9090"
+    depends_on:
+      - odordiff-api
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: odordiff-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    networks:
+      - odordiff-network
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: odordiff-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - odordiff-network
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # HTTP collector
+    
+  # Alert Manager for production alerting
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: odordiff-alertmanager
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/alertmanager/config.yml'
+      - '--storage.path=/alertmanager'
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/config.yml:ro
+    networks:
+      - odordiff-network
+    ports:
+      - "9093:9093"
+
+  # =============================================================================
+  # Security and Backup Services
+  # =============================================================================
+
+  # Backup service
+  backup:
+    image: postgres:15-alpine
+    container_name: odordiff-backup
+    restart: "no"
+    command: |
+      sh -c '
+        while true; do
+          pg_dump -h postgres -U odordiff -d odordiff > /backup/odordiff_$$(date +%Y%m%d_%H%M%S).sql
+          find /backup -name "*.sql" -mtime +7 -delete
+          sleep 86400
+        done
+      '
+    environment:
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backup
+    networks:
+      - odordiff-network
+    depends_on:
+      - postgres
+
+  # Log aggregation
+  fluentd:
+    image: fluent/fluentd:v1.16-1
+    container_name: odordiff-fluentd
+    restart: unless-stopped
+    volumes:
+      - ./fluentd.conf:/fluentd/etc/fluent.conf:ro
+      - app-logs:/var/log/app:ro
+    networks:
+      - odordiff-network
+    ports:
+      - "24224:24224"

@@ -1,0 +1,164 @@
+# Multi-stage Dockerfile for OdorDiff-2 API with scaling optimizations
+FROM nvidia/cuda:12.1-devel-ubuntu22.04 as base
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUDA_VISIBLE_DEVICES=all
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    python3.10-venv \
+    git \
+    wget \
+    curl \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    zlib1g-dev \
+    libncurses5-dev \
+    libgdbm-dev \
+    libnss3-dev \
+    libssl-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Redis tools
+RUN apt-get update && apt-get install -y redis-tools && rm -rf /var/lib/apt/lists/*
+
+# Set Python 3.10 as default
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+
+# Upgrade pip
+RUN python -m pip install --upgrade pip setuptools wheel
+
+# Create app directory
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt pyproject.toml ./
+
+# Install Python dependencies
+RUN pip install -r requirements.txt
+RUN pip install -e .
+
+# Development stage with additional tools
+FROM base as development
+
+# Install development dependencies
+RUN pip install pytest pytest-cov pytest-asyncio \
+    black isort flake8 mypy \
+    jupyter notebook \
+    tensorboard wandb
+
+# Copy source code
+COPY . .
+
+# Install in development mode
+RUN pip install -e .[dev,vis,monitoring]
+
+EXPOSE 8000 8001 8002
+
+CMD ["python", "-m", "odordiff2.cli", "serve", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+
+# Production stage optimized for scaling
+FROM base as production
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash odordiff2
+USER odordiff2
+WORKDIR /app
+
+# Copy only necessary files
+COPY --chown=odordiff2:odordiff2 requirements.txt pyproject.toml ./
+COPY --chown=odordiff2:odordiff2 odordiff2/ ./odordiff2/
+COPY --chown=odordiff2:odordiff2 scripts/ ./scripts/
+COPY --chown=odordiff2:odordiff2 config/ ./config/
+
+# Install production dependencies
+RUN pip install --user -r requirements.txt
+RUN pip install --user -e .
+
+# Set PATH for user pip installs
+ENV PATH="/home/odordiff2/.local/bin:${PATH}"
+
+# Create directories for scaling components
+RUN mkdir -p /app/logs /app/models /app/cache /app/tmp
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Expose ports
+EXPOSE 8000
+
+# Default command optimized for production
+CMD ["python", "-m", "uvicorn", "odordiff2.api.endpoints:app", \
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--workers", "4", "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--access-log", "--log-level", "info"]
+
+# Worker stage for Celery workers
+FROM base as worker
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash celeryworker
+USER celeryworker
+WORKDIR /app
+
+# Copy source code
+COPY --chown=celeryworker:celeryworker . .
+
+# Install dependencies
+RUN pip install --user -r requirements.txt
+RUN pip install --user -e .
+
+# Set PATH
+ENV PATH="/home/celeryworker/.local/bin:${PATH}"
+
+# Create directories
+RUN mkdir -p /app/logs /app/models /app/cache
+
+# Command for Celery worker
+CMD ["celery", "-A", "odordiff2.scaling.celery_tasks", "worker", \
+     "--loglevel=info", "--concurrency=2", "--max-tasks-per-child=100", \
+     "--time-limit=600", "--soft-time-limit=300"]
+
+# Monitoring stage for metrics collection
+FROM base as monitoring
+
+# Install monitoring tools
+RUN pip install prometheus-client grafana-api \
+    py-spy memory-profiler psutil
+
+# Create monitoring user
+RUN useradd --create-home --shell /bin/bash monitor
+USER monitor
+WORKDIR /app
+
+# Copy monitoring scripts
+COPY --chown=monitor:monitor scripts/monitoring/ ./monitoring/
+COPY --chown=monitor:monitor odordiff2/ ./odordiff2/
+
+# Install dependencies
+RUN pip install --user -r requirements.txt
+RUN pip install --user -e .
+
+ENV PATH="/home/monitor/.local/bin:${PATH}"
+
+EXPOSE 9090
+
+CMD ["python", "monitoring/prometheus_exporter.py"]

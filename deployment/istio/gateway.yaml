@@ -1,0 +1,153 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: odordiff-gateway
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - api.odordiff.ai
+    - "*.odordiff.ai"
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: odordiff-tls
+    hosts:
+    - api.odordiff.ai
+    - "*.odordiff.ai"
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: odordiff-api
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: virtualservice
+spec:
+  hosts:
+  - api.odordiff.ai
+  gateways:
+  - odordiff-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /health
+    route:
+    - destination:
+        host: odordiff-api
+        port:
+          number: 80
+    timeout: 10s
+    retries:
+      attempts: 3
+      perTryTimeout: 3s
+      retryOn: gateway-error,connect-failure,refused-stream
+  - match:
+    - uri:
+        prefix: /metrics
+    route:
+    - destination:
+        host: odordiff-api
+        port:
+          number: 80
+    timeout: 5s
+  - match:
+    - uri:
+        prefix: /api/v1/generate
+    route:
+    - destination:
+        host: odordiff-api
+        port:
+          number: 80
+    timeout: 120s
+    retries:
+      attempts: 2
+      perTryTimeout: 60s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 1s
+  - match:
+    - uri:
+        prefix: /
+    route:
+    - destination:
+        host: odordiff-api
+        port:
+          number: 80
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+      retryOn: gateway-error,connect-failure,refused-stream
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: odordiff-api
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: destinationrule
+spec:
+  host: odordiff-api
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        tcpKeepalive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+        minHealthPercent: 50
+    circuitBreaker:
+      consecutiveGatewayErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+      splitExternalLocalOriginErrors: true
+  portLevelSettings:
+  - port:
+      number: 80
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 10

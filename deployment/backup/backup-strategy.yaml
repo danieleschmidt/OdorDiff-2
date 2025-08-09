@@ -1,0 +1,716 @@
+# Comprehensive Backup and Disaster Recovery Strategy for OdorDiff-2
+# Multi-tier backup approach with automated recovery capabilities
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backup-system
+  labels:
+    name: backup-system
+    app.kubernetes.io/name: backup-system
+    app.kubernetes.io/component: disaster-recovery
+
+---
+# Velero Backup Configuration
+apiVersion: velero.io/v1
+kind: BackupStorageLocation
+metadata:
+  name: odordiff-backup-storage
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: velero
+    app.kubernetes.io/component: backup-storage
+spec:
+  provider: aws
+  objectStorage:
+    bucket: odordiff-velero-backup
+    prefix: production
+  config:
+    region: us-west-2
+    s3ForcePathStyle: "false"
+    s3Url: https://s3.us-west-2.amazonaws.com
+    kmsKeyId: arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012
+    serverSideEncryption: AES256
+  default: true
+
+---
+apiVersion: velero.io/v1
+kind: VolumeSnapshotLocation
+metadata:
+  name: odordiff-snapshot-location
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: velero
+    app.kubernetes.io/component: snapshot-location
+spec:
+  provider: aws
+  config:
+    region: us-west-2
+    profile: velero
+
+---
+# Daily Full Cluster Backup
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: odordiff-daily-backup
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: velero
+    app.kubernetes.io/component: backup-schedule
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM UTC
+  template:
+    metadata:
+      labels:
+        backup-type: daily
+        environment: production
+    spec:
+      includedNamespaces:
+      - odordiff
+      - monitoring
+      - security
+      - ingress-nginx
+      - istio-system
+      includedResources:
+      - "*"
+      excludedResources:
+      - events
+      - events.events.k8s.io
+      - backups.velero.io
+      - restores.velero.io
+      - resticrepositories.velero.io
+      snapshotVolumes: true
+      ttl: 720h  # 30 days retention
+      storageLocation: odordiff-backup-storage
+      volumeSnapshotLocations:
+      - odordiff-snapshot-location
+      hooks:
+        resources:
+        - name: postgres-backup-hook
+          includedNamespaces:
+          - odordiff
+          labelSelector:
+            matchLabels:
+              app: postgresql
+          pre:
+          - exec:
+              container: postgresql
+              command:
+              - /bin/bash
+              - -c
+              - "pg_dump -h localhost -U odordiff odordiff > /backup/pre-backup-$(date +%Y%m%d_%H%M%S).sql"
+              onError: Fail
+              timeout: 300s
+        - name: redis-backup-hook
+          includedNamespaces:
+          - odordiff
+          labelSelector:
+            matchLabels:
+              app: redis
+          pre:
+          - exec:
+              container: redis
+              command:
+              - /bin/bash
+              - -c
+              - "redis-cli --rdb /backup/redis-backup-$(date +%Y%m%d_%H%M%S).rdb"
+              onError: Continue
+              timeout: 180s
+
+---
+# Weekly Archive Backup (Long-term retention)
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: odordiff-weekly-archive
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: velero
+    app.kubernetes.io/component: backup-schedule
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM UTC
+  template:
+    metadata:
+      labels:
+        backup-type: weekly-archive
+        environment: production
+    spec:
+      includedNamespaces:
+      - odordiff
+      - monitoring
+      - security
+      snapshotVolumes: true
+      ttl: 8760h  # 1 year retention
+      storageLocation: odordiff-backup-storage
+      volumeSnapshotLocations:
+      - odordiff-snapshot-location
+
+---
+# Critical Data Backup (Multiple times per day)
+apiVersion: velero.io/v1
+kind: Schedule
+metadata:
+  name: odordiff-critical-data-backup
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: velero
+    app.kubernetes.io/component: backup-schedule
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  template:
+    metadata:
+      labels:
+        backup-type: critical-data
+        environment: production
+    spec:
+      includedNamespaces:
+      - odordiff
+      includedResources:
+      - persistentvolumeclaims
+      - persistentvolumes
+      - secrets
+      - configmaps
+      labelSelector:
+        matchLabels:
+          backup-critical: "true"
+      snapshotVolumes: true
+      ttl: 168h  # 7 days retention
+      storageLocation: odordiff-backup-storage
+
+---
+# Database Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-cronjob
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: postgres-backup
+    app.kubernetes.io/component: database-backup
+spec:
+  schedule: "0 */4 * * *"  # Every 4 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: postgres-backup
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: PGHOST
+              value: "postgres"
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: PGDATABASE
+              value: "odordiff"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-west-2"
+            - name: BACKUP_BUCKET
+              value: "odordiff-database-backups"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="odordiff_backup_${TIMESTAMP}.sql"
+              
+              echo "Starting PostgreSQL backup at $(date)"
+              
+              # Create compressed backup
+              pg_dump --verbose --clean --create --if-exists \
+                --format=custom --compress=9 \
+                --file="/tmp/${BACKUP_FILE}.dump" \
+                "${PGDATABASE}"
+              
+              # Create SQL backup for readability
+              pg_dump --verbose --clean --create --if-exists \
+                --file="/tmp/${BACKUP_FILE}" \
+                "${PGDATABASE}"
+              
+              # Compress SQL backup
+              gzip "/tmp/${BACKUP_FILE}"
+              
+              # Upload to S3
+              apk add --no-cache aws-cli
+              
+              aws s3 cp "/tmp/${BACKUP_FILE}.dump" \
+                "s3://${BACKUP_BUCKET}/dumps/$(date +%Y/%m/%d)/${BACKUP_FILE}.dump" \
+                --server-side-encryption AES256
+              
+              aws s3 cp "/tmp/${BACKUP_FILE}.gz" \
+                "s3://${BACKUP_BUCKET}/sql/$(date +%Y/%m/%d)/${BACKUP_FILE}.gz" \
+                --server-side-encryption AES256
+              
+              # Cleanup old backups (keep last 30 days)
+              aws s3 ls "s3://${BACKUP_BUCKET}/dumps/" --recursive | \
+                awk '$1 < "'$(date -d '30 days ago' '+%Y-%m-%d')'" {print $4}' | \
+                xargs -I {} aws s3 rm "s3://${BACKUP_BUCKET}/{}"
+              
+              echo "Backup completed successfully at $(date)"
+              
+              # Verify backup integrity
+              pg_restore --list "/tmp/${BACKUP_FILE}.dump" > /tmp/backup_contents.txt
+              if [ $? -eq 0 ]; then
+                echo "Backup integrity verified successfully"
+              else
+                echo "Backup integrity verification failed" >&2
+                exit 1
+              fi
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 250m
+              limits:
+                memory: 1Gi
+                cpu: 500m
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 2Gi
+
+---
+# Redis Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: redis-backup-cronjob
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: redis-backup
+    app.kubernetes.io/component: cache-backup
+spec:
+  schedule: "15 */6 * * *"  # Every 6 hours at 15 minutes past
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: redis-backup
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: redis-backup
+            image: redis:7-alpine
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: REDIS_HOST
+              value: "redis"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-west-2"
+            - name: BACKUP_BUCKET
+              value: "odordiff-redis-backups"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_FILE="redis_backup_${TIMESTAMP}.rdb"
+              
+              echo "Starting Redis backup at $(date)"
+              
+              # Install AWS CLI
+              apk add --no-cache aws-cli
+              
+              # Create backup using BGSAVE
+              redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}" BGSAVE
+              
+              # Wait for backup to complete
+              while [ "$(redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}" LASTSAVE)" = "$(redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}" LASTSAVE)" ]; do
+                sleep 1
+              done
+              
+              # Copy RDB file and compress
+              redis-cli -h "${REDIS_HOST}" -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}" --rdb "/tmp/${BACKUP_FILE}"
+              gzip "/tmp/${BACKUP_FILE}"
+              
+              # Upload to S3
+              aws s3 cp "/tmp/${BACKUP_FILE}.gz" \
+                "s3://${BACKUP_BUCKET}/$(date +%Y/%m/%d)/${BACKUP_FILE}.gz" \
+                --server-side-encryption AES256
+              
+              # Cleanup old backups (keep last 14 days for Redis)
+              aws s3 ls "s3://${BACKUP_BUCKET}/" --recursive | \
+                awk '$1 < "'$(date -d '14 days ago' '+%Y-%m-%d')'" {print $4}' | \
+                xargs -I {} aws s3 rm "s3://${BACKUP_BUCKET}/{}"
+              
+              echo "Redis backup completed successfully at $(date)"
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 250m
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 1Gi
+
+---
+# Application State Backup CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: app-state-backup-cronjob
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: app-state-backup
+    app.kubernetes.io/component: application-backup
+spec:
+  schedule: "30 2 * * *"  # Daily at 2:30 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: app-state-backup
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: app-state-backup
+            image: alpine/k8s:1.28.2
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: secret-access-key
+            - name: AWS_DEFAULT_REGION
+              value: "us-west-2"
+            - name: BACKUP_BUCKET
+              value: "odordiff-app-state-backups"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+              BACKUP_DIR="/tmp/app-state-${TIMESTAMP}"
+              mkdir -p "${BACKUP_DIR}"
+              
+              echo "Starting application state backup at $(date)"
+              
+              # Backup ConfigMaps
+              kubectl get configmaps -n odordiff -o yaml > "${BACKUP_DIR}/configmaps.yaml"
+              
+              # Backup Secrets (encrypted)
+              kubectl get secrets -n odordiff -o yaml > "${BACKUP_DIR}/secrets.yaml"
+              
+              # Backup Service definitions
+              kubectl get services -n odordiff -o yaml > "${BACKUP_DIR}/services.yaml"
+              
+              # Backup Ingress configurations
+              kubectl get ingress -n odordiff -o yaml > "${BACKUP_DIR}/ingress.yaml"
+              
+              # Backup Custom Resources
+              kubectl get rollouts -n odordiff -o yaml > "${BACKUP_DIR}/rollouts.yaml" || true
+              
+              # Backup NetworkPolicies
+              kubectl get networkpolicies -n odordiff -o yaml > "${BACKUP_DIR}/networkpolicies.yaml"
+              
+              # Backup ServiceAccounts and RBAC
+              kubectl get serviceaccounts,roles,rolebindings -n odordiff -o yaml > "${BACKUP_DIR}/rbac.yaml"
+              
+              # Create metadata file
+              cat > "${BACKUP_DIR}/backup-metadata.json" << EOF
+              {
+                "timestamp": "${TIMESTAMP}",
+                "cluster": "$(kubectl config current-context)",
+                "kubernetes_version": "$(kubectl version --client -o json | jq -r .clientVersion.gitVersion)",
+                "namespaces": ["odordiff", "monitoring", "security"],
+                "backup_type": "application-state",
+                "created_by": "odordiff-backup-system"
+              }
+              EOF
+              
+              # Compress backup
+              tar -czf "/tmp/app-state-backup-${TIMESTAMP}.tar.gz" -C "/tmp" "app-state-${TIMESTAMP}"
+              
+              # Install AWS CLI and upload
+              apk add --no-cache aws-cli
+              aws s3 cp "/tmp/app-state-backup-${TIMESTAMP}.tar.gz" \
+                "s3://${BACKUP_BUCKET}/$(date +%Y/%m/%d)/app-state-backup-${TIMESTAMP}.tar.gz" \
+                --server-side-encryption AES256
+              
+              # Verify upload
+              aws s3 ls "s3://${BACKUP_BUCKET}/$(date +%Y/%m/%d)/app-state-backup-${TIMESTAMP}.tar.gz"
+              
+              echo "Application state backup completed successfully at $(date)"
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 250m
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 1Gi
+
+---
+# Cross-Region Backup Replication
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cross-region-backup-sync
+  namespace: backup-system
+  labels:
+    app.kubernetes.io/name: cross-region-backup
+    app.kubernetes.io/component: disaster-recovery
+spec:
+  schedule: "0 5 * * *"  # Daily at 5 AM UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: cross-region-backup
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          serviceAccountName: backup-service-account
+          restartPolicy: OnFailure
+          containers:
+          - name: cross-region-sync
+            image: amazon/aws-cli:latest
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aws-backup-credentials
+                  key: secret-access-key
+            - name: PRIMARY_REGION
+              value: "us-west-2"
+            - name: BACKUP_REGION
+              value: "us-east-1"
+            - name: BACKUP_BUCKETS
+              value: "odordiff-velero-backup,odordiff-database-backups,odordiff-redis-backups,odordiff-app-state-backups"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting cross-region backup replication at $(date)"
+              
+              # Split bucket names into array
+              IFS=',' read -ra BUCKETS <<< "$BACKUP_BUCKETS"
+              
+              for bucket in "${BUCKETS[@]}"; do
+                echo "Syncing bucket: ${bucket}"
+                
+                # Create destination bucket if it doesn't exist
+                aws s3 mb "s3://${bucket}-${BACKUP_REGION}" \
+                  --region "${BACKUP_REGION}" || echo "Bucket already exists"
+                
+                # Enable versioning on destination bucket
+                aws s3api put-bucket-versioning \
+                  --bucket "${bucket}-${BACKUP_REGION}" \
+                  --versioning-configuration Status=Enabled
+                
+                # Sync buckets with server-side encryption
+                aws s3 sync "s3://${bucket}" "s3://${bucket}-${BACKUP_REGION}" \
+                  --source-region "${PRIMARY_REGION}" \
+                  --region "${BACKUP_REGION}" \
+                  --delete \
+                  --server-side-encryption AES256
+                
+                echo "Completed sync for bucket: ${bucket}"
+              done
+              
+              echo "Cross-region backup replication completed at $(date)"
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 250m
+            volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: tmp
+            emptyDir:
+              sizeLimit: 500Mi
+
+---
+# Service Account for Backup Jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-service-account
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: backup-service-account
+    app.kubernetes.io/component: backup
+automountServiceAccountToken: true
+
+---
+# RBAC for Backup Service Account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: backup-cluster-role
+  labels:
+    app.kubernetes.io/name: backup-cluster-role
+    app.kubernetes.io/component: backup
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "services", "persistentvolumeclaims"]
+  verbs: ["get", "list", "create", "update", "patch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+  verbs: ["get", "list"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses", "networkpolicies"]
+  verbs: ["get", "list"]
+- apiGroups: ["argoproj.io"]
+  resources: ["rollouts"]
+  verbs: ["get", "list"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: backup-cluster-role-binding
+  labels:
+    app.kubernetes.io/name: backup-cluster-role-binding
+    app.kubernetes.io/component: backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: backup-cluster-role
+subjects:
+- kind: ServiceAccount
+  name: backup-service-account
+  namespace: odordiff
+- kind: ServiceAccount
+  name: backup-service-account
+  namespace: backup-system

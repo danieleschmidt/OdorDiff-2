@@ -1,0 +1,512 @@
+# Pod Security Standards and Policies for OdorDiff-2
+# Implements comprehensive security constraints for all workloads
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: odordiff
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    security.compliance/level: high
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    security.compliance/level: critical
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    security.compliance/level: high
+
+---
+# Security Context Constraints for OpenShift (if applicable)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: odordiff-scc
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+requiredDropCapabilities:
+- ALL
+runAsUser:
+  type: MustRunAsRange
+  uidRangeMin: 1000
+  uidRangeMax: 2000
+seLinuxContext:
+  type: MustRunAs
+fsGroup:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+    max: 2000
+supplementalGroups:
+  type: MustRunAs
+  ranges:
+  - min: 1000
+    max: 2000
+readOnlyRootFilesystem: true
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+
+---
+# Pod Security Policy (Deprecated but included for older clusters)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: odordiff-psp
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'docker/default,runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName: 'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName: 'runtime/default'
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+  - ALL
+  volumes:
+  - 'configMap'
+  - 'emptyDir'
+  - 'projected'
+  - 'secret'
+  - 'downwardAPI'
+  - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  runAsGroup:
+    rule: 'MustRunAs'
+    ranges:
+    - min: 1000
+      max: 2000
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+    - min: 1000
+      max: 2000
+  readOnlyRootFilesystem: true
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+    - min: 1000
+      max: 2000
+
+---
+# RBAC for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: odordiff-psp-user
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+rules:
+- apiGroups:
+  - policy
+  resources:
+  - podsecuritypolicies
+  verbs:
+  - use
+  resourceNames:
+  - odordiff-psp
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: odordiff-psp-binding
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: odordiff-psp-user
+subjects:
+- kind: ServiceAccount
+  name: default
+  namespace: odordiff
+- kind: ServiceAccount
+  name: odordiff-api
+  namespace: odordiff
+- kind: ServiceAccount
+  name: odordiff-worker
+  namespace: odordiff
+
+---
+# Service Account for API with minimal permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: odordiff-api
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: api
+automountServiceAccountToken: true
+
+---
+# Service Account for Worker with minimal permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: odordiff-worker
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: worker
+automountServiceAccountToken: true
+
+---
+# RBAC for API service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: odordiff-api-role
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: rbac
+rules:
+# Allow reading ConfigMaps for configuration
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+# Allow reading Secrets for credentials
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+# Allow updating own status
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "patch"]
+  resourceNames: ["odordiff-api-*"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: odordiff-api-binding
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: odordiff-api-role
+subjects:
+- kind: ServiceAccount
+  name: odordiff-api
+  namespace: odordiff
+
+---
+# RBAC for Worker service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: odordiff-worker-role
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: rbac
+rules:
+# Allow reading ConfigMaps for configuration
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+# Allow reading Secrets for credentials
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list"]
+# Allow updating own status
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: odordiff-worker-binding
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: odordiff-worker-role
+subjects:
+- kind: ServiceAccount
+  name: odordiff-worker
+  namespace: odordiff
+
+---
+# Open Policy Agent (OPA) Gatekeeper Constraints
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredsecuritycontext
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredSecurityContext
+      validation:
+        properties:
+          runAsNonRoot:
+            type: boolean
+          readOnlyRootFilesystem:
+            type: boolean
+          allowPrivilegeEscalation:
+            type: boolean
+          requiredDropCapabilities:
+            type: array
+            items:
+              type: string
+  targets:
+  - target: admission.k8s.gatekeeper.sh
+    rego: |
+      package k8srequiredsecuritycontext
+
+      violation[{"msg": msg}] {
+        container := input.review.object.spec.containers[_]
+        not container.securityContext.runAsNonRoot == true
+        msg := "Container must run as non-root user"
+      }
+
+      violation[{"msg": msg}] {
+        container := input.review.object.spec.containers[_]
+        not container.securityContext.readOnlyRootFilesystem == true
+        msg := "Container must have read-only root filesystem"
+      }
+
+      violation[{"msg": msg}] {
+        container := input.review.object.spec.containers[_]
+        not container.securityContext.allowPrivilegeEscalation == false
+        msg := "Container must not allow privilege escalation"
+      }
+
+      violation[{"msg": msg}] {
+        container := input.review.object.spec.containers[_]
+        required := input.parameters.requiredDropCapabilities
+        provided := container.securityContext.capabilities.drop
+        missing := required[_]
+        not missing in provided
+        msg := sprintf("Container missing required drop capability: %v", [missing])
+      }
+
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredSecurityContext
+metadata:
+  name: must-have-security-context
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Pod"]
+    namespaces: ["odordiff", "security", "monitoring"]
+  parameters:
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    requiredDropCapabilities: ["ALL"]
+
+---
+# Resource Quota for security
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: odordiff-security-quota
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    persistentvolumeclaims: "10"
+    pods: "50"
+    services: "10"
+    secrets: "20"
+    configmaps: "20"
+
+---
+# Limit Range for security
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: odordiff-security-limits
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  limits:
+  # Container limits
+  - type: Container
+    default:
+      cpu: 1000m
+      memory: 2Gi
+      ephemeral-storage: 4Gi
+    defaultRequest:
+      cpu: 250m
+      memory: 512Mi
+      ephemeral-storage: 1Gi
+    max:
+      cpu: 4000m
+      memory: 8Gi
+      ephemeral-storage: 10Gi
+    min:
+      cpu: 100m
+      memory: 128Mi
+      ephemeral-storage: 100Mi
+  # Pod limits
+  - type: Pod
+    max:
+      cpu: 8000m
+      memory: 16Gi
+      ephemeral-storage: 20Gi
+    min:
+      cpu: 100m
+      memory: 128Mi
+      ephemeral-storage: 100Mi
+  # PVC limits
+  - type: PersistentVolumeClaim
+    max:
+      storage: 100Gi
+    min:
+      storage: 1Gi
+
+---
+# Image Security Policy
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  validationFailureAction: enforce
+  background: true
+  rules:
+  - name: disallow-privileged
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Privileged containers are not allowed"
+      pattern:
+        spec:
+          =(securityContext):
+            =(privileged): "false"
+          containers:
+          - name: "*"
+            =(securityContext):
+              =(privileged): "false"
+
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-non-root-user
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  validationFailureAction: enforce
+  background: true
+  rules:
+  - name: require-non-root
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Containers must run as non-root user"
+      pattern:
+        spec:
+          =(securityContext):
+            =(runAsNonRoot): "true"
+          containers:
+          - name: "*"
+            =(securityContext):
+              =(runAsNonRoot): "true"
+
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-host-namespaces
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: security
+spec:
+  validationFailureAction: enforce
+  background: true
+  rules:
+  - name: disallow-host-namespaces
+    match:
+      any:
+      - resources:
+          kinds:
+          - Pod
+    validate:
+      message: "Use of host namespaces is not allowed"
+      pattern:
+        spec:
+          =(hostNetwork): "false"
+          =(hostIPC): "false"
+          =(hostPID): "false"

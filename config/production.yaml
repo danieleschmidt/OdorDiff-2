@@ -1,0 +1,86 @@
+# Production environment configuration
+environment: production
+debug: false
+testing: false
+version: "1.0.0"
+
+database:
+  host: redis-cluster
+  port: 6379
+  password: null  # Set via environment variable
+  db: 0
+  connection_pool_size: 20
+  connection_timeout: 5.0
+  socket_timeout: 3.0
+  retry_on_timeout: true
+  max_connections: 100
+
+security:
+  secret_key: null  # Must be set via environment variable
+  api_key_length: 64
+  session_timeout: 1800  # 30 minutes
+  max_login_attempts: 3
+  lockout_duration: 900  # 15 minutes
+  password_min_length: 12
+  require_https: true
+  allowed_hosts:
+    - "*.terragonlabs.ai"
+    - "odordiff.terragonlabs.ai"
+  cors_origins:
+    - "https://*.terragonlabs.ai"
+  jwt_expiry: 3600  # 1 hour
+
+rate_limit:
+  enabled: true
+  default_rate: 60
+  default_window: 60
+  burst_multiplier: 1.2
+  ip_whitelist: []
+  ip_blacklist: []
+  api_key_rate: 500
+  global_rate: 10000
+
+monitoring:
+  enabled: true
+  metrics_export_interval: 60
+  health_check_interval: 30
+  log_level: INFO
+  structured_logging: true
+  correlation_ids: true
+  performance_tracking: true
+  error_reporting: true
+  prometheus_enabled: true
+  prometheus_port: 9090
+
+cache:
+  enabled: true
+  default_ttl: 3600  # 1 hour
+  max_size: 50000
+  cleanup_interval: 300
+  compression_enabled: true
+  serialization: json
+  backup_enabled: true
+  backup_interval: 21600  # 6 hours
+
+model:
+  device: cuda  # Use GPU in production if available
+  max_workers: 8
+  batch_size: 16
+  max_sequence_length: 512
+  temperature: 1.0
+  top_k: 50
+  top_p: 0.9
+  safety_threshold: 0.05  # Stricter safety in production
+  model_path: /models/odordiff2
+  preload_cache: true
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  workers: 4
+  timeout: 30
+  max_request_size: 8388608  # 8MB
+  enable_docs: false  # Disable in production
+  enable_metrics: true
+  request_id_header: "X-Request-ID"
+  api_prefix: "/api/v1"

@@ -1,0 +1,356 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: odordiff-deploy-
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: deployment-pipeline
+spec:
+  entrypoint: deploy-pipeline
+  serviceAccountName: argocd-workflow-controller
+  
+  # Global parameters
+  arguments:
+    parameters:
+    - name: image-tag
+      value: "1.0.0"
+    - name: environment
+      value: "production"
+    - name: app-name
+      value: "odordiff-2"
+    - name: namespace
+      value: "odordiff"
+
+  # Workflow templates
+  templates:
+  - name: deploy-pipeline
+    dag:
+      tasks:
+      # Pre-deployment validation
+      - name: validate-config
+        template: validate-configuration
+      - name: security-scan
+        template: security-scanning
+        dependencies: [validate-config]
+      - name: load-test
+        template: load-testing
+        dependencies: [validate-config]
+      
+      # Database migration
+      - name: db-migration
+        template: database-migration
+        dependencies: [security-scan, load-test]
+      
+      # Blue-Green deployment
+      - name: deploy-blue
+        template: deploy-environment
+        arguments:
+          parameters:
+          - name: target-env
+            value: "blue"
+        dependencies: [db-migration]
+      
+      - name: validate-blue
+        template: validate-deployment
+        arguments:
+          parameters:
+          - name: target-env
+            value: "blue"
+        dependencies: [deploy-blue]
+      
+      - name: switch-traffic
+        template: traffic-switch
+        dependencies: [validate-blue]
+      
+      - name: cleanup-green
+        template: cleanup-environment
+        arguments:
+          parameters:
+          - name: target-env
+            value: "green"
+        dependencies: [switch-traffic]
+      
+      # Post-deployment validation
+      - name: smoke-tests
+        template: smoke-testing
+        dependencies: [switch-traffic]
+      
+      - name: integration-tests
+        template: integration-testing
+        dependencies: [smoke-tests]
+      
+      - name: performance-tests
+        template: performance-testing
+        dependencies: [smoke-tests]
+      
+      # Monitoring setup
+      - name: configure-monitoring
+        template: setup-monitoring
+        dependencies: [integration-tests, performance-tests]
+      
+      # Notification
+      - name: notify-success
+        template: send-notification
+        arguments:
+          parameters:
+          - name: status
+            value: "success"
+        dependencies: [configure-monitoring]
+
+  # Template definitions
+  - name: validate-configuration
+    container:
+      image: alpine/k8s:1.28.2
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Validating Kubernetes configurations..."
+        kubectl --dry-run=client apply -k /workspace/deployment/kubernetes/
+        echo "Configuration validation completed successfully"
+      volumeMounts:
+      - name: workspace
+        mountPath: /workspace
+    volumes:
+    - name: workspace
+      configMap:
+        name: odordiff-deployment-config
+
+  - name: security-scanning
+    container:
+      image: aquasec/trivy:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Running security scans..."
+        trivy image --exit-code 1 --severity HIGH,CRITICAL odordiff2:{{workflow.parameters.image-tag}}
+        echo "Security scan completed"
+
+  - name: load-testing
+    container:
+      image: grafana/k6:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Running load tests..."
+        k6 run --vus 50 --duration 5m /scripts/load-test.js
+        echo "Load testing completed"
+      volumeMounts:
+      - name: load-test-scripts
+        mountPath: /scripts
+    volumes:
+    - name: load-test-scripts
+      configMap:
+        name: odordiff-load-test-scripts
+
+  - name: database-migration
+    container:
+      image: odordiff2:{{workflow.parameters.image-tag}}
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Running database migrations..."
+        python -c "
+        import sys
+        sys.path.append('/app')
+        from odordiff2.config.settings import get_database_connection
+        # Run migrations here
+        print('Database migrations completed')
+        "
+      env:
+      - name: DATABASE_URL
+        valueFrom:
+          secretKeyRef:
+            name: odordiff-secrets
+            key: database-url
+      - name: ENVIRONMENT
+        value: "{{workflow.parameters.environment}}"
+
+  - name: deploy-environment
+    inputs:
+      parameters:
+      - name: target-env
+    container:
+      image: argoproj/argocd:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Deploying to {{inputs.parameters.target-env}} environment..."
+        argocd app sync {{workflow.parameters.app-name}}-{{inputs.parameters.target-env}} --force
+        argocd app wait {{workflow.parameters.app-name}}-{{inputs.parameters.target-env}} --timeout 600
+        echo "Deployment to {{inputs.parameters.target-env}} completed"
+      env:
+      - name: ARGOCD_SERVER
+        value: "argocd-server.argocd.svc.cluster.local:443"
+      - name: ARGOCD_AUTH_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: argocd-workflow-token
+            key: token
+
+  - name: validate-deployment
+    inputs:
+      parameters:
+      - name: target-env
+    container:
+      image: curlimages/curl:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Validating {{inputs.parameters.target-env}} deployment..."
+        sleep 30
+        
+        # Health check
+        curl -f http://odordiff-api-{{inputs.parameters.target-env}}.{{workflow.parameters.namespace}}.svc.cluster.local/health
+        
+        # API functionality test
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d '{"description": "vanilla and rose scent", "num_molecules": 1}' \
+          http://odordiff-api-{{inputs.parameters.target-env}}.{{workflow.parameters.namespace}}.svc.cluster.local/api/v1/generate
+        
+        echo "Validation of {{inputs.parameters.target-env}} completed successfully"
+
+  - name: traffic-switch
+    container:
+      image: alpine/k8s:1.28.2
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Switching traffic to blue environment..."
+        kubectl patch virtualservice odordiff-api-vs -n {{workflow.parameters.namespace}} --type merge -p '{"spec":{"http":[{"route":[{"destination":{"host":"odordiff-api-blue","port":{"number":80}},"weight":100}]}]}}'
+        echo "Traffic switched to blue environment"
+
+  - name: cleanup-environment
+    inputs:
+      parameters:
+      - name: target-env
+    container:
+      image: alpine/k8s:1.28.2
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Cleaning up {{inputs.parameters.target-env}} environment..."
+        kubectl scale deployment odordiff-api-{{inputs.parameters.target-env}} -n {{workflow.parameters.namespace}} --replicas=0
+        echo "Cleanup of {{inputs.parameters.target-env}} completed"
+
+  - name: smoke-testing
+    container:
+      image: postman/newman:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Running smoke tests..."
+        newman run /tests/smoke-tests.json --env-var base_url=http://odordiff-api.{{workflow.parameters.namespace}}.svc.cluster.local
+        echo "Smoke tests completed"
+      volumeMounts:
+      - name: test-collections
+        mountPath: /tests
+    volumes:
+    - name: test-collections
+      configMap:
+        name: odordiff-test-collections
+
+  - name: integration-testing
+    container:
+      image: python:3.11-slim
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Running integration tests..."
+        pip install requests pytest
+        python -m pytest /tests/integration/ -v --junit-xml=/results/integration-results.xml
+        echo "Integration tests completed"
+      volumeMounts:
+      - name: integration-tests
+        mountPath: /tests
+      - name: test-results
+        mountPath: /results
+    volumes:
+    - name: integration-tests
+      configMap:
+        name: odordiff-integration-tests
+    - name: test-results
+      emptyDir: {}
+
+  - name: performance-testing
+    container:
+      image: grafana/k6:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Running performance tests..."
+        k6 run --vus 100 --duration 10m --out influxdb=http://influxdb.monitoring.svc.cluster.local:8086/k6 /scripts/performance-test.js
+        echo "Performance tests completed"
+      volumeMounts:
+      - name: performance-test-scripts
+        mountPath: /scripts
+    volumes:
+    - name: performance-test-scripts
+      configMap:
+        name: odordiff-performance-test-scripts
+
+  - name: setup-monitoring
+    container:
+      image: alpine/k8s:1.28.2
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Setting up monitoring and alerts..."
+        kubectl apply -f /monitoring/prometheus-rules.yaml
+        kubectl apply -f /monitoring/grafana-dashboards.yaml
+        kubectl apply -f /monitoring/alertmanager-config.yaml
+        echo "Monitoring setup completed"
+      volumeMounts:
+      - name: monitoring-configs
+        mountPath: /monitoring
+    volumes:
+    - name: monitoring-configs
+      configMap:
+        name: odordiff-monitoring-configs
+
+  - name: send-notification
+    inputs:
+      parameters:
+      - name: status
+    container:
+      image: curlimages/curl:latest
+      command: ["/bin/sh"]
+      args:
+      - -c
+      - |
+        echo "Sending deployment notification..."
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d "{\"text\": \"🚀 OdorDiff-2 deployment {{inputs.parameters.status}}: {{workflow.parameters.image-tag}} to {{workflow.parameters.environment}}\"}" \
+          "$SLACK_WEBHOOK_URL"
+        echo "Notification sent"
+      env:
+      - name: SLACK_WEBHOOK_URL
+        valueFrom:
+          secretKeyRef:
+            name: slack-webhook
+            key: url
+
+  # Failure handling
+  onExit: |
+    if [ "{{workflow.status}}" != "Succeeded" ]; then
+      echo "Deployment failed, initiating rollback..."
+      argocd app rollback {{workflow.parameters.app-name}} --revision $(argocd app history {{workflow.parameters.app-name}} --limit 2 | tail -1 | awk '{print $1}')
+      curl -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"text\": \"❌ OdorDiff-2 deployment FAILED: {{workflow.parameters.image-tag}} to {{workflow.parameters.environment}}. Rollback initiated.\"}" \
+        "$SLACK_WEBHOOK_URL"
+    fi

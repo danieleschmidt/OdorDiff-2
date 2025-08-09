@@ -1,0 +1,231 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-primary
+  namespace: odordiff2
+  labels:
+    app: redis
+    role: primary
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+      role: primary
+  template:
+    metadata:
+      labels:
+        app: redis
+        role: primary
+    spec:
+      containers:
+      - name: redis
+        image: redis:7.2-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        args:
+        - --appendonly yes
+        - --appendfsync everysec
+        - --maxmemory 1gb
+        - --maxmemory-policy allkeys-lru
+        volumeMounts:
+        - name: redis-config
+          mountPath: /etc/redis
+        - name: redis-data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 5
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+          periodSeconds: 5
+      volumes:
+      - name: redis-config
+        configMap:
+          name: redis-config
+      - name: redis-data
+        persistentVolumeClaim:
+          claimName: redis-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: odordiff2
+  labels:
+    app: redis
+    role: primary
+spec:
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  selector:
+    app: redis
+    role: primary
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: odordiff2
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: odordiff2
+data:
+  redis.conf: |
+    # Redis configuration for OdorDiff-2 scaling
+    bind 0.0.0.0
+    port 6379
+    
+    # Memory management
+    maxmemory 1gb
+    maxmemory-policy allkeys-lru
+    
+    # Persistence
+    save 900 1
+    save 300 10
+    save 60 10000
+    
+    appendonly yes
+    appendfsync everysec
+    auto-aof-rewrite-percentage 100
+    auto-aof-rewrite-min-size 64mb
+    
+    # Performance tuning
+    tcp-keepalive 300
+    timeout 0
+    tcp-backlog 511
+    
+    # Logging
+    loglevel notice
+    
+    # Client management
+    maxclients 10000
+    
+    # Slow log
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+
+---
+# Redis Sentinel for high availability
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-sentinel
+  namespace: odordiff2
+  labels:
+    app: redis-sentinel
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      containers:
+      - name: sentinel
+        image: redis:7.2-alpine
+        ports:
+        - containerPort: 26379
+          name: sentinel
+        command:
+        - redis-sentinel
+        - /etc/redis/sentinel.conf
+        volumeMounts:
+        - name: sentinel-config
+          mountPath: /etc/redis
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - -p
+            - "26379"
+            - ping
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: sentinel-config
+        configMap:
+          name: redis-sentinel-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel
+  namespace: odordiff2
+  labels:
+    app: redis-sentinel
+spec:
+  ports:
+  - port: 26379
+    targetPort: 26379
+    name: sentinel
+  selector:
+    app: redis-sentinel
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-sentinel-config
+  namespace: odordiff2
+data:
+  sentinel.conf: |
+    port 26379
+    sentinel monitor mymaster redis 6379 2
+    sentinel down-after-milliseconds mymaster 30000
+    sentinel parallel-syncs mymaster 1
+    sentinel failover-timeout mymaster 180000
+    sentinel deny-scripts-reconfig yes
+    logfile ""

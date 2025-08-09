@@ -1,0 +1,450 @@
+version: '3.8'
+
+services:
+  # Redis for caching and message broker
+  redis:
+    image: redis:7.2-alpine
+    container_name: odordiff2-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./config/redis.conf:/etc/redis/redis.conf
+    command: redis-server /etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+    networks:
+      - odordiff2-network
+
+  # Redis Sentinel for high availability
+  redis-sentinel:
+    image: redis:7.2-alpine
+    container_name: odordiff2-redis-sentinel
+    ports:
+      - "26379:26379"
+    volumes:
+      - ./config/sentinel.conf:/etc/redis/sentinel.conf
+    command: redis-sentinel /etc/redis/sentinel.conf
+    depends_on:
+      - redis
+    networks:
+      - odordiff2-network
+
+  # PostgreSQL with read replicas
+  postgres-primary:
+    image: postgres:15-alpine
+    container_name: odordiff2-postgres-primary
+    environment:
+      POSTGRES_DB: odordiff2
+      POSTGRES_USER: odordiff2
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_123}
+      POSTGRES_REPLICATION_USER: replica
+      POSTGRES_REPLICATION_PASSWORD: ${REPLICA_PASSWORD:-replica_password_123}
+    volumes:
+      - postgres_primary_data:/var/lib/postgresql/data
+      - ./config/postgresql-primary.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/init-replica.sql:/docker-entrypoint-initdb.d/01-init-replica.sql
+    ports:
+      - "5432:5432"
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U odordiff2 -d odordiff2"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - odordiff2-network
+
+  postgres-replica:
+    image: postgres:15-alpine
+    container_name: odordiff2-postgres-replica
+    environment:
+      POSTGRES_DB: odordiff2
+      POSTGRES_USER: odordiff2
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secure_password_123}
+      PGUSER: postgres
+      POSTGRES_PRIMARY_HOST: postgres-primary
+      POSTGRES_PRIMARY_PORT: 5432
+      POSTGRES_REPLICATION_USER: replica
+      POSTGRES_REPLICATION_PASSWORD: ${REPLICA_PASSWORD:-replica_password_123}
+    volumes:
+      - postgres_replica_data:/var/lib/postgresql/data
+      - ./config/postgresql-replica.conf:/etc/postgresql/postgresql.conf
+      - ./scripts/setup-replica.sh:/docker-entrypoint-initdb.d/setup-replica.sh
+    ports:
+      - "5433:5432"
+    depends_on:
+      - postgres-primary
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - odordiff2-network
+
+  # OdorDiff-2 API instances (load balanced)
+  odordiff2-api-1:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: production
+    container_name: odordiff2-api-1
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres-primary
+      - POSTGRES_REPLICA_HOST=postgres-replica
+      - POSTGRES_DB=odordiff2
+      - POSTGRES_USER=odordiff2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password_123}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LOG_LEVEL=info
+      - ENABLE_SCALING=true
+      - ENABLE_GPU=${ENABLE_GPU:-false}
+    ports:
+      - "8001:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres-primary:
+        condition: service_healthy
+    volumes:
+      - ./models:/app/models:ro
+      - api_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    networks:
+      - odordiff2-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  odordiff2-api-2:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: production
+    container_name: odordiff2-api-2
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres-primary
+      - POSTGRES_REPLICA_HOST=postgres-replica
+      - POSTGRES_DB=odordiff2
+      - POSTGRES_USER=odordiff2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password_123}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LOG_LEVEL=info
+      - ENABLE_SCALING=true
+      - ENABLE_GPU=${ENABLE_GPU:-false}
+    ports:
+      - "8002:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres-primary:
+        condition: service_healthy
+    volumes:
+      - ./models:/app/models:ro
+      - api_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G
+    networks:
+      - odordiff2-network
+
+  # Celery workers for distributed processing
+  celery-worker-1:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: worker
+    container_name: odordiff2-celery-worker-1
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres-primary
+      - POSTGRES_DB=odordiff2
+      - POSTGRES_USER=odordiff2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password_123}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - WORKER_TYPE=general
+      - ENABLE_GPU=${ENABLE_GPU:-false}
+    depends_on:
+      - redis
+      - postgres-primary
+    volumes:
+      - ./models:/app/models:ro
+      - worker_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    networks:
+      - odordiff2-network
+
+  celery-worker-2:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: worker
+    container_name: odordiff2-celery-worker-2
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres-primary
+      - POSTGRES_DB=odordiff2
+      - POSTGRES_USER=odordiff2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password_123}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - WORKER_TYPE=batch
+      - ENABLE_GPU=${ENABLE_GPU:-false}
+    depends_on:
+      - redis
+      - postgres-primary
+    volumes:
+      - ./models:/app/models:ro
+      - worker_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+    networks:
+      - odordiff2-network
+
+  # GPU worker (optional)
+  celery-gpu-worker:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: worker
+    container_name: odordiff2-celery-gpu-worker
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - POSTGRES_HOST=postgres-primary
+      - POSTGRES_DB=odordiff2
+      - POSTGRES_USER=odordiff2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-secure_password_123}
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - WORKER_TYPE=gpu
+      - ENABLE_GPU=true
+      - CUDA_VISIBLE_DEVICES=0
+    depends_on:
+      - redis
+      - postgres-primary
+    volumes:
+      - ./models:/app/models:ro
+      - worker_logs:/app/logs
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 8G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - odordiff2-network
+    profiles:
+      - gpu
+
+  # HAProxy load balancer
+  haproxy:
+    image: haproxy:2.8-alpine
+    container_name: odordiff2-haproxy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8404:8404"  # HAProxy stats
+    volumes:
+      - ./config/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./ssl:/etc/ssl/certs:ro
+    depends_on:
+      - odordiff2-api-1
+      - odordiff2-api-2
+    networks:
+      - odordiff2-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8404/stats"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx for static content and additional load balancing
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: odordiff2-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./static:/usr/share/nginx/html/static:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - haproxy
+    networks:
+      - odordiff2-network
+
+  # Celery Flower for monitoring
+  flower:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: production
+    container_name: odordiff2-flower
+    command: celery -A odordiff2.scaling.celery_tasks flower --port=5555 --broker=redis://redis:6379/0
+    ports:
+      - "5555:5555"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - redis
+    networks:
+      - odordiff2-network
+
+  # Prometheus for metrics collection
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: odordiff2-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - odordiff2-network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: odordiff2-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+    depends_on:
+      - prometheus
+    networks:
+      - odordiff2-network
+
+  # Node exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: odordiff2-node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - odordiff2-network
+
+  # Redis exporter for Redis metrics
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.54.0
+    container_name: odordiff2-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    depends_on:
+      - redis
+    networks:
+      - odordiff2-network
+
+  # Auto-scaler service
+  autoscaler:
+    build:
+      context: ../..
+      dockerfile: scaling/docker/Dockerfile.api
+      target: monitoring
+    container_name: odordiff2-autoscaler
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - AUTOSCALE_ENABLE=true
+      - AUTOSCALE_BACKEND=docker_swarm
+      - AUTOSCALE_MIN_INSTANCES=2
+      - AUTOSCALE_MAX_INSTANCES=10
+      - AUTOSCALE_CPU_OUT_THRESHOLD=70
+      - AUTOSCALE_MEMORY_OUT_THRESHOLD=80
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - redis
+      - prometheus
+    networks:
+      - odordiff2-network
+    command: python -m odordiff2.scaling.auto_scaler
+
+volumes:
+  redis_data:
+    driver: local
+  postgres_primary_data:
+    driver: local
+  postgres_replica_data:
+    driver: local
+  api_logs:
+    driver: local
+  worker_logs:
+    driver: local
+  nginx_cache:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  odordiff2-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

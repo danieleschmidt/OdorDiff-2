@@ -1,0 +1,435 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: odordiff-api-rollout
+  namespace: odordiff
+  labels:
+    app: odordiff-api
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: rollout
+spec:
+  replicas: 6
+  strategy:
+    canary:
+      # Canary deployment with blue-green capabilities
+      analysis:
+        templates:
+        - templateName: success-rate
+        startingStep: 2
+        args:
+        - name: service-name
+          value: odordiff-api-canary
+      steps:
+      # Initial canary deployment (16.7% of traffic)
+      - setWeight: 17
+      - pause: 
+          duration: 2m
+      # Promote to 33% and run analysis
+      - setWeight: 33
+      - pause:
+          duration: 2m
+      - analysis:
+          templates:
+          - templateName: success-rate
+          args:
+          - name: service-name
+            value: odordiff-api-canary
+      # Promote to 50%
+      - setWeight: 50
+      - pause:
+          duration: 5m
+      # Promote to 75%
+      - setWeight: 75
+      - pause:
+          duration: 5m
+      # Final promotion to 100%
+      - setWeight: 100
+      - pause:
+          duration: 2m
+      # Cleanup
+      antiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution: {}
+        preferredDuringSchedulingIgnoredDuringExecution:
+          weight: 1
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - odordiff-api
+            topologyKey: kubernetes.io/hostname
+      canaryService: odordiff-api-canary
+      stableService: odordiff-api
+      trafficRouting:
+        istio:
+          virtualServices:
+          - name: odordiff-api-vs
+            routes:
+            - primary
+          destinationRule:
+            name: odordiff-api-dr
+            canarySubsetName: canary
+            stableSubsetName: stable
+      scaleDownDelaySeconds: 30
+      abortScaleDownDelaySeconds: 60
+  selector:
+    matchLabels:
+      app: odordiff-api
+  template:
+    metadata:
+      labels:
+        app: odordiff-api
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: odordiff-api
+        image: odordiff2:1.0.0
+        imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: redis-url
+        - name: LOG_LEVEL
+          value: "INFO"
+        - name: PROMETHEUS_ENABLED
+          value: "true"
+        - name: JAEGER_ENABLED
+          value: "true"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+            ephemeral-storage: "2Gi"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "4Gi"
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-tmp
+          mountPath: /app/tmp
+        - name: app-logs
+          mountPath: /app/logs
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: app-tmp
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      terminationGracePeriodSeconds: 60
+      imagePullSecrets:
+      - name: odordiff-registry-secret
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: analysis
+spec:
+  args:
+  - name: service-name
+    value: odordiff-api-canary
+  metrics:
+  - name: success-rate
+    interval: 30s
+    successCondition: result[0] >= 0.95
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: http://prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          sum(
+            rate(
+              http_requests_total{
+                job="{{args.service-name}}",
+                status!~"5.."
+              }[2m]
+            )
+          ) / 
+          sum(
+            rate(
+              http_requests_total{
+                job="{{args.service-name}}"
+              }[2m]
+            )
+          )
+  - name: response-time
+    interval: 30s
+    successCondition: result[0] < 0.5
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: http://prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          histogram_quantile(0.95,
+            rate(
+              http_request_duration_seconds_bucket{
+                job="{{args.service-name}}"
+              }[2m]
+            )
+          )
+  - name: error-rate
+    interval: 30s
+    successCondition: result[0] < 0.05
+    failureLimit: 5
+    provider:
+      prometheus:
+        address: http://prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          sum(
+            rate(
+              http_requests_total{
+                job="{{args.service-name}}",
+                status=~"5.."
+              }[2m]
+            )
+          ) / 
+          sum(
+            rate(
+              http_requests_total{
+                job="{{args.service-name}}"
+              }[2m]
+            )
+          )
+
+---
+# Blue-Green deployment configuration
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: odordiff-worker-rollout
+  namespace: odordiff
+  labels:
+    app: odordiff-worker
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: rollout
+spec:
+  replicas: 4
+  strategy:
+    blueGreen:
+      activeService: odordiff-worker
+      previewService: odordiff-worker-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 120
+      prePromotionAnalysis:
+        templates:
+        - templateName: worker-health-check
+        args:
+        - name: service-name
+          value: odordiff-worker-preview
+      postPromotionAnalysis:
+        templates:
+        - templateName: worker-performance
+        args:
+        - name: service-name
+          value: odordiff-worker
+      previewReplicaCount: 2
+      promotionPolicy:
+        timeoutSeconds: 600
+  selector:
+    matchLabels:
+      app: odordiff-worker
+  template:
+    metadata:
+      labels:
+        app: odordiff-worker
+        version: v1
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: odordiff-worker
+        image: odordiff2:1.0.0
+        imagePullPolicy: Always
+        command: ["celery"]
+        args: ["-A", "odordiff2.scaling.celery_tasks", "worker", "--loglevel=info", "--concurrency=4"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: redis-url
+        - name: LOG_LEVEL
+          value: "INFO"
+        resources:
+          requests:
+            memory: "1.5Gi"
+            cpu: "1000m"
+          limits:
+            memory: "3Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-tmp
+          mountPath: /app/tmp
+        - name: app-logs
+          mountPath: /app/logs
+        livenessProbe:
+          exec:
+            command:
+            - celery
+            - -A
+            - odordiff2.scaling.celery_tasks
+            - inspect
+            - ping
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - celery
+            - -A
+            - odordiff2.scaling.celery_tasks
+            - inspect
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: app-tmp
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: worker-health-check
+  namespace: odordiff
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: worker-queue-length
+    interval: 30s
+    successCondition: result[0] < 100
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: http://prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          celery_queue_length{service="{{args.service-name}}"}
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: worker-performance
+  namespace: odordiff
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: task-success-rate
+    interval: 60s
+    successCondition: result[0] >= 0.98
+    failureLimit: 5
+    provider:
+      prometheus:
+        address: http://prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          sum(
+            rate(
+              celery_task_total{
+                service="{{args.service-name}}",
+                state="SUCCESS"
+              }[5m]
+            )
+          ) / 
+          sum(
+            rate(
+              celery_task_total{
+                service="{{args.service-name}}"
+              }[5m]
+            )
+          )

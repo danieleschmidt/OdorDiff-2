@@ -1,0 +1,91 @@
+# Development environment configuration
+environment: development
+debug: true
+testing: false
+version: "1.0.0"
+
+database:
+  host: localhost
+  port: 6379
+  password: null
+  db: 0
+  connection_pool_size: 5
+  connection_timeout: 5.0
+  socket_timeout: 5.0
+  retry_on_timeout: true
+  max_connections: 20
+
+security:
+  secret_key: "dev-secret-key-change-in-production"
+  api_key_length: 32
+  session_timeout: 3600
+  max_login_attempts: 10
+  lockout_duration: 300
+  password_min_length: 8
+  require_https: false
+  allowed_hosts:
+    - localhost
+    - 127.0.0.1
+    - "*.local"
+  cors_origins:
+    - http://localhost:3000
+    - http://localhost:8000
+    - http://127.0.0.1:3000
+  jwt_expiry: 86400
+
+rate_limit:
+  enabled: true
+  default_rate: 100
+  default_window: 60
+  burst_multiplier: 2.0
+  ip_whitelist:
+    - 127.0.0.1
+    - "::1"
+  ip_blacklist: []
+  api_key_rate: 1000
+  global_rate: 5000
+
+monitoring:
+  enabled: true
+  metrics_export_interval: 30
+  health_check_interval: 30
+  log_level: DEBUG
+  structured_logging: true
+  correlation_ids: true
+  performance_tracking: true
+  error_reporting: true
+  prometheus_enabled: false
+  prometheus_port: 9090
+
+cache:
+  enabled: true
+  default_ttl: 1800  # 30 minutes
+  max_size: 5000
+  cleanup_interval: 300
+  compression_enabled: false
+  serialization: json
+  backup_enabled: false
+  backup_interval: 86400
+
+model:
+  device: cpu
+  max_workers: 2
+  batch_size: 4
+  max_sequence_length: 512
+  temperature: 1.0
+  top_k: 50
+  top_p: 0.9
+  safety_threshold: 0.1
+  model_path: null
+  preload_cache: true
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  workers: 1
+  timeout: 60
+  max_request_size: 16777216  # 16MB
+  enable_docs: true
+  enable_metrics: true
+  request_id_header: "X-Request-ID"
+  api_prefix: "/api/v1"

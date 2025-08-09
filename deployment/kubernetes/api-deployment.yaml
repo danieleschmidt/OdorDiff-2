@@ -1,0 +1,196 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: odordiff-api
+  namespace: odordiff
+  labels:
+    app: odordiff-api
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: odordiff-platform
+    version: v1
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 50%
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      app: odordiff-api
+  template:
+    metadata:
+      labels:
+        app: odordiff-api
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+        sidecar.istio.io/inject: "true"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: odordiff-api
+        image: odordiff2:1.0.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 8000
+          name: http
+          protocol: TCP
+        env:
+        - name: ENVIRONMENT
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: redis-url
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: odordiff-config
+              key: log-level
+        - name: WORKERS
+          value: "4"
+        - name: PROMETHEUS_ENABLED
+          value: "true"
+        - name: JAEGER_ENABLED
+          value: "true"
+        - name: JAEGER_ENDPOINT
+          value: "http://jaeger-collector.istio-system:14268/api/traces"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+            ephemeral-storage: "2Gi"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "4Gi"
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: app-tmp
+          mountPath: /app/tmp
+        - name: app-logs
+          mountPath: /app/logs
+        - name: config-volume
+          mountPath: /app/config
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+          successThreshold: 1
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+          successThreshold: 1
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
+          successThreshold: 1
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: app-tmp
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: app-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: config-volume
+        configMap:
+          name: odordiff-config
+      terminationGracePeriodSeconds: 60
+      restartPolicy: Always
+      imagePullSecrets:
+      - name: odordiff-registry-secret
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: odordiff-api
+  namespace: odordiff
+  labels:
+    app: odordiff-api
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8000
+    protocol: TCP
+    name: http
+  selector:
+    app: odordiff-api
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: odordiff-config
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: config
+data:
+  log-level: "INFO"
+  environment: "production"
+  max-requests: "1000"
+  worker-class: "gevent"
+  prometheus-enabled: "true"
+  jaeger-enabled: "true"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: odordiff-secrets
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: secrets
+type: Opaque
+stringData:
+  database-url: "postgresql://odordiff:changeme@postgres:5432/odordiff"
+  redis-url: "redis://redis:6379/0"
+  api-key: "changeme-in-production"

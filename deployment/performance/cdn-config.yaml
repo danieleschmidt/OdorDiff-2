@@ -1,0 +1,672 @@
+# CDN and Performance Optimization Configuration for OdorDiff-2
+# Global content delivery and edge computing setup
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflare-cdn-config
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: cloudflare-cdn
+    app.kubernetes.io/component: configuration
+data:
+  cloudflare-config.yaml: |
+    # Cloudflare CDN Configuration
+    zones:
+      - zone_name: "odordiff.ai"
+        zone_id: "your-zone-id-here"
+        settings:
+          # Performance settings
+          always_online: "on"
+          browser_cache_ttl: 31536000  # 1 year for static assets
+          edge_cache_ttl: 7200  # 2 hours for API responses
+          
+          # Security settings
+          security_level: "medium"
+          ssl: "strict"
+          always_use_https: "on"
+          
+          # Performance optimizations
+          minify:
+            css: "on"
+            html: "on"
+            js: "on"
+          
+          # Image optimization
+          image_resizing: "on"
+          polish: "lossless"
+          webp: "on"
+          
+          # API optimization
+          rocket_loader: "off"  # Disabled for API endpoints
+          mirage: "off"         # Disabled for API endpoints
+          
+    page_rules:
+      # API endpoints - dynamic content
+      - targets:
+        - "api.odordiff.ai/api/*"
+        actions:
+          browser_cache_ttl: 0
+          edge_cache_ttl: 300  # 5 minutes
+          cache_level: "bypass"
+          
+      # Static assets - aggressive caching
+      - targets:
+        - "*.odordiff.ai/*.js"
+        - "*.odordiff.ai/*.css"
+        - "*.odordiff.ai/*.png"
+        - "*.odordiff.ai/*.jpg"
+        - "*.odordiff.ai/*.svg"
+        actions:
+          browser_cache_ttl: 31536000  # 1 year
+          edge_cache_ttl: 31536000
+          cache_level: "cache_everything"
+          
+      # Documentation - moderate caching
+      - targets:
+        - "docs.odordiff.ai/*"
+        actions:
+          browser_cache_ttl: 86400  # 1 day
+          edge_cache_ttl: 3600      # 1 hour
+          cache_level: "standard"
+
+---
+# AWS CloudFront Distribution
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudfront-config
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: cloudfront
+    app.kubernetes.io/component: configuration
+data:
+  distribution-config.json: |
+    {
+      "CallerReference": "odordiff-production-2025",
+      "Comment": "OdorDiff-2 Global CDN Distribution",
+      "DefaultRootObject": "index.html",
+      "Origins": {
+        "Quantity": 3,
+        "Items": [
+          {
+            "Id": "odordiff-api-origin",
+            "DomainName": "api.odordiff.ai",
+            "CustomOriginConfig": {
+              "HTTPPort": 443,
+              "HTTPSPort": 443,
+              "OriginProtocolPolicy": "https-only",
+              "OriginSslProtocols": {
+                "Quantity": 1,
+                "Items": ["TLSv1.2"]
+              }
+            },
+            "ConnectionAttempts": 3,
+            "ConnectionTimeout": 10,
+            "OriginShield": {
+              "Enabled": true,
+              "OriginShieldRegion": "us-west-2"
+            }
+          },
+          {
+            "Id": "odordiff-static-origin",
+            "DomainName": "static.odordiff.ai",
+            "S3OriginConfig": {
+              "OriginAccessIdentity": ""
+            }
+          },
+          {
+            "Id": "odordiff-docs-origin",
+            "DomainName": "docs.odordiff.ai",
+            "CustomOriginConfig": {
+              "HTTPPort": 443,
+              "HTTPSPort": 443,
+              "OriginProtocolPolicy": "https-only"
+            }
+          }
+        ]
+      },
+      "DefaultCacheBehavior": {
+        "TargetOriginId": "odordiff-api-origin",
+        "ViewerProtocolPolicy": "redirect-to-https",
+        "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",  # CachingDisabled
+        "OriginRequestPolicyId": "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf",  # CORS-S3Origin
+        "ResponseHeadersPolicyId": "67f7725c-6f97-4210-82d7-5512b31e9d03",  # SecurityHeadersPolicy
+        "Compress": true,
+        "AllowedMethods": {
+          "Quantity": 7,
+          "Items": ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"],
+          "CachedMethods": {
+            "Quantity": 2,
+            "Items": ["GET", "HEAD"]
+          }
+        }
+      },
+      "CacheBehaviors": {
+        "Quantity": 3,
+        "Items": [
+          {
+            "PathPattern": "/api/*",
+            "TargetOriginId": "odordiff-api-origin",
+            "ViewerProtocolPolicy": "https-only",
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "TTL": {
+              "DefaultTTL": 0,
+              "MaxTTL": 300,
+              "MinTTL": 0
+            },
+            "Compress": true,
+            "AllowedMethods": {
+              "Quantity": 7,
+              "Items": ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+            }
+          },
+          {
+            "PathPattern": "/static/*",
+            "TargetOriginId": "odordiff-static-origin",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",  # CachingOptimized
+            "TTL": {
+              "DefaultTTL": 86400,
+              "MaxTTL": 31536000,
+              "MinTTL": 0
+            },
+            "Compress": true
+          },
+          {
+            "PathPattern": "/docs/*",
+            "TargetOriginId": "odordiff-docs-origin",
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+            "TTL": {
+              "DefaultTTL": 3600,
+              "MaxTTL": 86400,
+              "MinTTL": 0
+            },
+            "Compress": true
+          }
+        ]
+      },
+      "CustomErrorResponses": {
+        "Quantity": 3,
+        "Items": [
+          {
+            "ErrorCode": 404,
+            "ResponsePagePath": "/404.html",
+            "ResponseCode": "404",
+            "ErrorCachingMinTTL": 300
+          },
+          {
+            "ErrorCode": 500,
+            "ResponsePagePath": "/500.html",
+            "ResponseCode": "500",
+            "ErrorCachingMinTTL": 0
+          },
+          {
+            "ErrorCode": 503,
+            "ResponsePagePath": "/maintenance.html",
+            "ResponseCode": "503",
+            "ErrorCachingMinTTL": 0
+          }
+        ]
+      },
+      "ViewerCertificate": {
+        "ACMCertificateArn": "arn:aws:acm:us-east-1:123456789012:certificate/12345678-1234-1234-1234-123456789012",
+        "SSLSupportMethod": "sni-only",
+        "MinimumProtocolVersion": "TLSv1.2_2021"
+      },
+      "Aliases": {
+        "Quantity": 2,
+        "Items": ["odordiff.ai", "www.odordiff.ai"]
+      },
+      "PriceClass": "PriceClass_All",
+      "Enabled": true,
+      "WebACLId": "arn:aws:wafv2:us-east-1:123456789012:global/webacl/odordiff-waf/12345678-1234-1234-1234-123456789012",
+      "HttpVersion": "http2and3",
+      "IsIPV6Enabled": true,
+      "Logging": {
+        "Enabled": true,
+        "IncludeCookies": false,
+        "Bucket": "odordiff-cloudfront-logs.s3.amazonaws.com",
+        "Prefix": "access-logs/"
+      }
+    }
+
+---
+# CDN Cache Warming Job
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cdn-cache-warming
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: cache-warming
+    app.kubernetes.io/component: performance
+spec:
+  schedule: "0 */4 * * *"  # Every 4 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: cache-warming
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+          restartPolicy: OnFailure
+          containers:
+          - name: cache-warmer
+            image: curlimages/curl:latest
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: CDN_DOMAIN
+              value: "https://odordiff.ai"
+            - name: API_DOMAIN
+              value: "https://api.odordiff.ai"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting CDN cache warming at $(date)"
+              
+              # Define critical endpoints to warm
+              ENDPOINTS=(
+                "/"
+                "/docs"
+                "/api/v1/health"
+                "/api/v1/ready"
+                "/api/v1/models"
+                "/static/css/main.css"
+                "/static/js/app.js"
+                "/static/images/logo.svg"
+              )
+              
+              # Warm cache for each endpoint
+              for endpoint in "${ENDPOINTS[@]}"; do
+                if [[ "$endpoint" == "/api"* ]]; then
+                  url="${API_DOMAIN}${endpoint}"
+                else
+                  url="${CDN_DOMAIN}${endpoint}"
+                fi
+                
+                echo "Warming cache for: $url"
+                
+                # Make request with cache-busting header
+                curl -s -o /dev/null -w "Status: %{http_code}, Time: %{time_total}s\n" \
+                  -H "Cache-Control: no-cache" \
+                  -H "Pragma: no-cache" \
+                  "$url" || echo "Failed to warm: $url"
+                
+                # Small delay between requests
+                sleep 1
+              done
+              
+              # Warm cache for popular molecule requests
+              POPULAR_MOLECULES=(
+                "vanilla"
+                "rose"
+                "lavender"
+                "citrus"
+                "mint"
+              )
+              
+              for molecule in "${POPULAR_MOLECULES[@]}"; do
+                echo "Pre-generating popular molecule: $molecule"
+                curl -s -X POST \
+                  -H "Content-Type: application/json" \
+                  -H "Authorization: Bearer ${API_KEY:-demo}" \
+                  -d "{\"description\": \"${molecule} scent\", \"num_molecules\": 1}" \
+                  "${API_DOMAIN}/api/v1/generate" || echo "Failed to generate: $molecule"
+                
+                sleep 2
+              done
+              
+              echo "CDN cache warming completed at $(date)"
+            resources:
+              requests:
+                memory: 64Mi
+                cpu: 50m
+              limits:
+                memory: 128Mi
+                cpu: 100m
+
+---
+# Edge Computing Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-worker
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: edge-worker
+    app.kubernetes.io/component: edge-computing
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edge-worker
+  template:
+    metadata:
+      labels:
+        app: edge-worker
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: edge-worker
+        image: odordiff2:1.0.0
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: WORKER_TYPE
+          value: "edge"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: odordiff-secrets
+              key: redis-url
+        - name: EDGE_LOCATION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['topology.kubernetes.io/region']
+        - name: LOG_LEVEL
+          value: "INFO"
+        command:
+        - python
+        - -c
+        - |
+          import asyncio
+          import json
+          import logging
+          import time
+          from datetime import datetime, timedelta
+          from typing import Dict, List, Optional
+          
+          import aioredis
+          import uvicorn
+          from fastapi import FastAPI, HTTPException, Request
+          from fastapi.middleware.cors import CORSMiddleware
+          from fastapi.responses import JSONResponse
+          
+          # Configure logging
+          logging.basicConfig(level=logging.INFO)
+          logger = logging.getLogger(__name__)
+          
+          app = FastAPI(title="OdorDiff-2 Edge Worker")
+          
+          # Add CORS middleware
+          app.add_middleware(
+              CORSMiddleware,
+              allow_origins=["*"],
+              allow_credentials=True,
+              allow_methods=["*"],
+              allow_headers=["*"],
+          )
+          
+          # Global variables
+          redis_client: Optional[aioredis.Redis] = None
+          cache_stats = {"hits": 0, "misses": 0}
+          
+          @app.on_startup
+          async def startup_event():
+              global redis_client
+              redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
+              redis_client = await aioredis.from_url(redis_url)
+              logger.info("Edge worker started successfully")
+          
+          @app.on_shutdown
+          async def shutdown_event():
+              if redis_client:
+                  await redis_client.close()
+          
+          @app.middleware("http")
+          async def add_edge_headers(request: Request, call_next):
+              response = await call_next(request)
+              response.headers["X-Edge-Location"] = os.environ.get("EDGE_LOCATION", "unknown")
+              response.headers["X-Edge-Cache"] = "HIT" if hasattr(request.state, "cache_hit") else "MISS"
+              return response
+          
+          @app.get("/health")
+          async def health_check():
+              return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+          
+          @app.get("/metrics")
+          async def metrics():
+              total_requests = cache_stats["hits"] + cache_stats["misses"]
+              cache_hit_ratio = cache_stats["hits"] / total_requests if total_requests > 0 else 0
+              
+              return {
+                  "cache_hits": cache_stats["hits"],
+                  "cache_misses": cache_stats["misses"],
+                  "cache_hit_ratio": cache_hit_ratio,
+                  "edge_location": os.environ.get("EDGE_LOCATION", "unknown")
+              }
+          
+          @app.get("/api/v1/popular-molecules")
+          async def get_popular_molecules():
+              """Serve popular molecules from edge cache"""
+              cache_key = "popular_molecules"
+              
+              # Try to get from cache
+              cached_data = await redis_client.get(cache_key)
+              if cached_data:
+                  cache_stats["hits"] += 1
+                  return json.loads(cached_data)
+              
+              # If not in cache, return default popular molecules
+              cache_stats["misses"] += 1
+              popular_molecules = [
+                  {"name": "Vanilla", "smiles": "COC1=CC=CC=C1C=O", "description": "Sweet vanilla scent"},
+                  {"name": "Rose", "smiles": "CC(C)CCCC(C)CCCC(C)CCCC(C)C", "description": "Classic rose fragrance"},
+                  {"name": "Lavender", "smiles": "CC1=CCC(CC1)C(C)C", "description": "Calming lavender aroma"},
+                  {"name": "Citrus", "smiles": "CC1=CCC(CC1=O)C(C)(C)C", "description": "Fresh citrus scent"},
+                  {"name": "Mint", "smiles": "CC(C)C1CCC(CC1)C(C)C", "description": "Cool minty freshness"}
+              ]
+              
+              # Cache for 1 hour
+              await redis_client.setex(cache_key, 3600, json.dumps(popular_molecules))
+              
+              return popular_molecules
+          
+          @app.post("/api/v1/generate/cached")
+          async def generate_cached(request: dict):
+              """Generate molecules with aggressive caching for popular requests"""
+              description = request.get("description", "").lower().strip()
+              
+              # Create cache key based on description
+              cache_key = f"generated:{hash(description)}"
+              
+              # Try to get from cache
+              cached_result = await redis_client.get(cache_key)
+              if cached_result:
+                  cache_stats["hits"] += 1
+                  return json.loads(cached_result)
+              
+              # For edge worker, return pre-computed results for popular scents
+              popular_results = {
+                  "vanilla": {
+                      "molecules": [{"smiles": "COC1=CC=CC=C1C=O", "confidence": 0.95}],
+                      "generated_at": datetime.utcnow().isoformat(),
+                      "cached": True
+                  },
+                  "rose": {
+                      "molecules": [{"smiles": "CC(C)CCCC(C)CCCC(C)CCCC(C)C", "confidence": 0.92}],
+                      "generated_at": datetime.utcnow().isoformat(),
+                      "cached": True
+                  }
+              }
+              
+              # Check if this is a popular scent
+              for scent, result in popular_results.items():
+                  if scent in description:
+                      cache_stats["hits"] += 1
+                      # Cache for 24 hours
+                      await redis_client.setex(cache_key, 86400, json.dumps(result))
+                      return result
+              
+              # For non-popular scents, return cache miss
+              cache_stats["misses"] += 1
+              raise HTTPException(
+                  status_code=202,
+                  detail={"message": "Request queued for processing", "estimated_wait": "30s"}
+              )
+          
+          if __name__ == "__main__":
+              import os
+              uvicorn.run(app, host="0.0.0.0", port=8080)
+        resources:
+          requests:
+            memory: 256Mi
+            cpu: 100m
+          limits:
+            memory: 512Mi
+            cpu: 250m
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 100Mi
+
+---
+# Edge Worker Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-worker
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: edge-worker
+    app.kubernetes.io/component: edge-computing
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: edge-worker
+
+---
+# Performance Monitoring ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: performance-config
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: performance-config
+    app.kubernetes.io/component: monitoring
+data:
+  performance-thresholds.yaml: |
+    # Performance SLA Thresholds
+    thresholds:
+      api:
+        response_time_p95: 500ms
+        response_time_p99: 1000ms
+        error_rate: 0.1%
+        availability: 99.9%
+      
+      database:
+        query_time_p95: 100ms
+        connection_pool_utilization: 80%
+        cache_hit_ratio: 95%
+      
+      cache:
+        hit_ratio: 90%
+        memory_utilization: 85%
+        eviction_rate: 5%
+      
+      cdn:
+        cache_hit_ratio: 85%
+        edge_response_time: 100ms
+        origin_shield_hit_ratio: 95%
+    
+    alerts:
+      - name: "High API Response Time"
+        condition: "response_time_p95 > 500ms"
+        severity: "warning"
+      
+      - name: "Very High API Response Time"
+        condition: "response_time_p95 > 1000ms"
+        severity: "critical"
+      
+      - name: "Low CDN Hit Ratio"
+        condition: "cdn_hit_ratio < 80%"
+        severity: "warning"
+      
+      - name: "High Database Query Time"
+        condition: "db_query_time_p95 > 200ms"
+        severity: "warning"
+
+  optimization-tips.md: |
+    # Performance Optimization Guidelines
+    
+    ## Database Optimization
+    - Use connection pooling with appropriate pool sizes
+    - Implement query result caching
+    - Use read replicas for heavy read workloads
+    - Optimize queries with proper indexing
+    - Use prepared statements
+    
+    ## Cache Strategy
+    - Implement multi-tier caching (L1: Application, L2: Redis, L3: CDN)
+    - Use cache warming for popular content
+    - Implement cache invalidation strategies
+    - Monitor cache hit ratios and adjust TTLs
+    
+    ## CDN Best Practices
+    - Set appropriate cache headers
+    - Use edge locations close to users
+    - Implement cache warming for critical content
+    - Use origin shield for cache efficiency
+    - Enable compression and image optimization
+    
+    ## Application Performance
+    - Use async/await for I/O operations
+    - Implement request/response compression
+    - Use HTTP/2 and HTTP/3 when available
+    - Minimize payload sizes
+    - Implement request deduplication
