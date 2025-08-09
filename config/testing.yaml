@@ -1,0 +1,88 @@
+# Testing environment configuration
+environment: testing
+debug: false
+testing: true
+version: "1.0.0"
+
+database:
+  host: localhost
+  port: 6379
+  password: null
+  db: 15  # Use different DB for testing
+  connection_pool_size: 3
+  connection_timeout: 2.0
+  socket_timeout: 2.0
+  retry_on_timeout: false
+  max_connections: 10
+
+security:
+  secret_key: "test-secret-key-not-for-production"
+  api_key_length: 32
+  session_timeout: 300  # 5 minutes
+  max_login_attempts: 100  # Relaxed for testing
+  lockout_duration: 10
+  password_min_length: 6
+  require_https: false
+  allowed_hosts:
+    - localhost
+    - 127.0.0.1
+    - testserver
+  cors_origins:
+    - "*"  # Allow all origins for testing
+  jwt_expiry: 3600
+
+rate_limit:
+  enabled: false  # Disable rate limiting for tests
+  default_rate: 10000
+  default_window: 60
+  burst_multiplier: 10.0
+  ip_whitelist:
+    - "0.0.0.0/0"  # Allow all IPs
+  ip_blacklist: []
+  api_key_rate: 10000
+  global_rate: 100000
+
+monitoring:
+  enabled: false  # Minimal monitoring for tests
+  metrics_export_interval: 300
+  health_check_interval: 60
+  log_level: ERROR  # Only errors in tests
+  structured_logging: false
+  correlation_ids: false
+  performance_tracking: false
+  error_reporting: false
+  prometheus_enabled: false
+  prometheus_port: 9091
+
+cache:
+  enabled: true
+  default_ttl: 60  # Short TTL for tests
+  max_size: 100
+  cleanup_interval: 30
+  compression_enabled: false
+  serialization: json
+  backup_enabled: false
+  backup_interval: 86400
+
+model:
+  device: cpu
+  max_workers: 1
+  batch_size: 2
+  max_sequence_length: 128  # Smaller for faster tests
+  temperature: 1.0
+  top_k: 10
+  top_p: 0.9
+  safety_threshold: 0.5  # Relaxed for testing
+  model_path: null
+  preload_cache: false
+
+api:
+  host: 127.0.0.1
+  port: 8001  # Different port for testing
+  workers: 1
+  timeout: 10
+  max_request_size: 1048576  # 1MB
+  enable_docs: true
+  enable_metrics: false
+  request_id_header: "X-Request-ID"
+  api_prefix: "/api/v1"

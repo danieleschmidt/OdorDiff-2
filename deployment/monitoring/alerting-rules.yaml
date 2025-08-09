@@ -1,0 +1,326 @@
+groups:
+  # Infrastructure Alerts
+  - name: infrastructure.rules
+    interval: 30s
+    rules:
+    - alert: InstanceDown
+      expr: up == 0
+      for: 5m
+      labels:
+        severity: critical
+        category: infrastructure
+      annotations:
+        summary: "Instance {{ $labels.instance }} down"
+        description: "{{ $labels.instance }} of job {{ $labels.job }} has been down for more than 5 minutes."
+
+    - alert: HighCPUUsage
+      expr: (100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)) > 80
+      for: 10m
+      labels:
+        severity: warning
+        category: infrastructure
+      annotations:
+        summary: "High CPU usage on {{ $labels.instance }}"
+        description: "CPU usage is above 80% for more than 10 minutes on {{ $labels.instance }}"
+
+    - alert: HighMemoryUsage
+      expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100 > 85
+      for: 10m
+      labels:
+        severity: warning
+        category: infrastructure
+      annotations:
+        summary: "High memory usage on {{ $labels.instance }}"
+        description: "Memory usage is above 85% for more than 10 minutes on {{ $labels.instance }}"
+
+    - alert: DiskSpaceLow
+      expr: (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes) * 100 < 10
+      for: 5m
+      labels:
+        severity: critical
+        category: infrastructure
+      annotations:
+        summary: "Low disk space on {{ $labels.instance }}"
+        description: "Disk space is below 10% on {{ $labels.instance }} mounted at {{ $labels.mountpoint }}"
+
+  # Kubernetes Alerts
+  - name: kubernetes.rules
+    interval: 30s
+    rules:
+    - alert: KubernetesNodeNotReady
+      expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+      for: 5m
+      labels:
+        severity: critical
+        category: kubernetes
+      annotations:
+        summary: "Kubernetes node not ready"
+        description: "Node {{ $labels.node }} has been unready for more than 5 minutes"
+
+    - alert: KubernetesPodCrashLooping
+      expr: rate(kube_pod_container_status_restarts_total[15m]) > 0
+      for: 5m
+      labels:
+        severity: warning
+        category: kubernetes
+      annotations:
+        summary: "Pod is crash looping"
+        description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} ({{ $labels.container }}) is restarting {{ printf \"%.2f\" $value }} times every 5 minutes"
+
+    - alert: KubernetesPodNotReady
+      expr: kube_pod_status_ready{condition="true"} == 0
+      for: 10m
+      labels:
+        severity: warning
+        category: kubernetes
+      annotations:
+        summary: "Pod not ready"
+        description: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been in a non-ready state for longer than 10 minutes"
+
+    - alert: KubernetesDeploymentReplicasMismatch
+      expr: kube_deployment_spec_replicas != kube_deployment_status_available_replicas
+      for: 5m
+      labels:
+        severity: warning
+        category: kubernetes
+      annotations:
+        summary: "Deployment replicas mismatch"
+        description: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has {{ $labels.spec_replicas }} desired but {{ $labels.available_replicas }} available replicas"
+
+  # OdorDiff-2 Application Alerts
+  - name: odordiff.rules
+    interval: 15s
+    rules:
+    - alert: OdorDiffAPIDown
+      expr: up{job="odordiff-api"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        category: application
+        service: odordiff-api
+      annotations:
+        summary: "OdorDiff-2 API is down"
+        description: "OdorDiff-2 API instance {{ $labels.instance }} has been down for more than 1 minute"
+
+    - alert: OdorDiffHighErrorRate
+      expr: rate(http_requests_total{job="odordiff-api",status=~"5.."}[5m]) / rate(http_requests_total{job="odordiff-api"}[5m]) > 0.05
+      for: 5m
+      labels:
+        severity: warning
+        category: application
+        service: odordiff-api
+      annotations:
+        summary: "High error rate in OdorDiff-2 API"
+        description: "Error rate is {{ printf \"%.2f\" $value }}% for {{ $labels.instance }}"
+
+    - alert: OdorDiffHighLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="odordiff-api"}[5m])) > 2.0
+      for: 5m
+      labels:
+        severity: warning
+        category: application
+        service: odordiff-api
+      annotations:
+        summary: "High latency in OdorDiff-2 API"
+        description: "95th percentile latency is {{ printf \"%.2f\" $value }}s for {{ $labels.instance }}"
+
+    - alert: OdorDiffLowThroughput
+      expr: rate(http_requests_total{job="odordiff-api"}[5m]) < 1
+      for: 10m
+      labels:
+        severity: warning
+        category: application
+        service: odordiff-api
+      annotations:
+        summary: "Low throughput in OdorDiff-2 API"
+        description: "Request rate is {{ printf \"%.2f\" $value }} requests/sec for {{ $labels.instance }}"
+
+    - alert: OdorDiffWorkerQueueBacklog
+      expr: celery_queue_length{job="odordiff-workers"} > 100
+      for: 10m
+      labels:
+        severity: warning
+        category: application
+        service: odordiff-worker
+      annotations:
+        summary: "High queue backlog in OdorDiff-2 workers"
+        description: "Worker queue has {{ $value }} pending tasks"
+
+    - alert: OdorDiffWorkerDown
+      expr: up{job="odordiff-workers"} == 0
+      for: 2m
+      labels:
+        severity: critical
+        category: application
+        service: odordiff-worker
+      annotations:
+        summary: "OdorDiff-2 worker is down"
+        description: "Worker instance {{ $labels.instance }} has been down for more than 2 minutes"
+
+    - alert: OdorDiffModelLoadFailure
+      expr: increase(odordiff_model_load_errors_total[10m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        category: application
+        service: odordiff-api
+      annotations:
+        summary: "AI model loading failure"
+        description: "{{ $value }} AI model load failures in the last 10 minutes"
+
+    - alert: OdorDiffGenerationFailureRate
+      expr: rate(odordiff_generation_failures_total[5m]) / rate(odordiff_generation_requests_total[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+        category: application
+        service: odordiff-api
+      annotations:
+        summary: "High molecule generation failure rate"
+        description: "Generation failure rate is {{ printf \"%.2f\" $value }}% over the last 5 minutes"
+
+  # Database Alerts
+  - name: database.rules
+    interval: 30s
+    rules:
+    - alert: PostgreSQLDown
+      expr: pg_up == 0
+      for: 1m
+      labels:
+        severity: critical
+        category: database
+      annotations:
+        summary: "PostgreSQL is down"
+        description: "PostgreSQL instance {{ $labels.instance }} has been down for more than 1 minute"
+
+    - alert: PostgreSQLTooManyConnections
+      expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+      for: 5m
+      labels:
+        severity: warning
+        category: database
+      annotations:
+        summary: "PostgreSQL has too many connections"
+        description: "PostgreSQL instance {{ $labels.instance }} is using {{ printf \"%.0f\" $value }}% of max connections"
+
+    - alert: PostgreSQLSlowQueries
+      expr: pg_stat_activity_max_tx_duration > 300
+      for: 5m
+      labels:
+        severity: warning
+        category: database
+      annotations:
+        summary: "PostgreSQL slow queries detected"
+        description: "Longest running transaction is {{ $value }}s on {{ $labels.instance }}"
+
+    - alert: PostgreSQLReplicationLag
+      expr: pg_replication_lag > 60
+      for: 5m
+      labels:
+        severity: warning
+        category: database
+      annotations:
+        summary: "PostgreSQL replication lag"
+        description: "Replication lag is {{ $value }}s for replica {{ $labels.instance }}"
+
+  # Redis Alerts
+  - name: redis.rules
+    interval: 30s
+    rules:
+    - alert: RedisDown
+      expr: redis_up == 0
+      for: 1m
+      labels:
+        severity: critical
+        category: cache
+      annotations:
+        summary: "Redis is down"
+        description: "Redis instance {{ $labels.instance }} has been down for more than 1 minute"
+
+    - alert: RedisMemoryHigh
+      expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+        category: cache
+      annotations:
+        summary: "Redis memory usage is high"
+        description: "Redis instance {{ $labels.instance }} is using {{ printf \"%.0f\" $value }}% of max memory"
+
+    - alert: RedisSlowLog
+      expr: increase(redis_slowlog_length[5m]) > 0
+      for: 1m
+      labels:
+        severity: warning
+        category: cache
+      annotations:
+        summary: "Redis slow queries detected"
+        description: "{{ $value }} slow queries detected on {{ $labels.instance }} in the last 5 minutes"
+
+  # Security Alerts
+  - name: security.rules
+    interval: 60s
+    rules:
+    - alert: UnauthorizedAPIAccess
+      expr: increase(http_requests_total{status="401"}[5m]) > 10
+      for: 1m
+      labels:
+        severity: warning
+        category: security
+      annotations:
+        summary: "High number of unauthorized API requests"
+        description: "{{ $value }} unauthorized requests to {{ $labels.instance }} in the last 5 minutes"
+
+    - alert: SuspiciousTrafficSpike
+      expr: rate(http_requests_total[5m]) > (4 * rate(http_requests_total[1h] offset 1h))
+      for: 2m
+      labels:
+        severity: warning
+        category: security
+      annotations:
+        summary: "Suspicious traffic spike detected"
+        description: "Traffic to {{ $labels.instance }} is 4x higher than usual"
+
+    - alert: RateLimitExceeded
+      expr: increase(http_requests_total{status="429"}[5m]) > 50
+      for: 2m
+      labels:
+        severity: warning
+        category: security
+      annotations:
+        summary: "Rate limit exceeded"
+        description: "{{ $value }} rate limited requests to {{ $labels.instance }} in the last 5 minutes"
+
+  # Business Metrics Alerts
+  - name: business.rules
+    interval: 60s
+    rules:
+    - alert: LowDailyActiveUsers
+      expr: odordiff_daily_active_users < 100
+      for: 30m
+      labels:
+        severity: warning
+        category: business
+      annotations:
+        summary: "Low daily active users"
+        description: "Daily active users is {{ $value }}, below expected threshold of 100"
+
+    - alert: HighGenerationCost
+      expr: avg_over_time(odordiff_generation_cost_usd[1h]) > 0.50
+      for: 30m
+      labels:
+        severity: warning
+        category: business
+      annotations:
+        summary: "High generation cost per request"
+        description: "Average generation cost is ${{ printf \"%.2f\" $value }} per request over the last hour"
+
+    - alert: LowConversionRate
+      expr: (rate(odordiff_successful_generations_total[1h]) / rate(odordiff_generation_requests_total[1h])) < 0.8
+      for: 30m
+      labels:
+        severity: warning
+        category: business
+      annotations:
+        summary: "Low generation success rate"
+        description: "Generation success rate is {{ printf \"%.1f\" $value }}% over the last hour"

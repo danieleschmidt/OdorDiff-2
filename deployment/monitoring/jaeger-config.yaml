@@ -1,0 +1,335 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-configuration
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: configuration
+data:
+  jaeger.yaml: |
+    # Jaeger configuration for distributed tracing
+    query:
+      # Base path for all HTTP routes
+      base-path: /
+      # Static files directory
+      static-files: /go/jaeger-ui/
+      # UI configuration
+      ui-config: |
+        {
+          "dependencies": {
+            "menuEnabled": true
+          },
+          "archiveEnabled": true,
+          "tracking": {
+            "gaID": "UA-000000-2"
+          }
+        }
+      # Query timeout
+      query-timeout: 30s
+      # Additional query options
+      additional-headers:
+        - "Access-Control-Allow-Origin: *"
+        - "Access-Control-Allow-Headers: *"
+
+    collector:
+      # Collector queue size
+      queue-size: 2000
+      # Number of workers to process traces
+      num-workers: 50
+      # Write timeout
+      write-timeout: 5s
+      # Log level
+      log-level: info
+      # Kafka configuration (if using Kafka)
+      kafka:
+        producer:
+          topic: jaeger-spans
+          brokers:
+            - kafka:9092
+          encoding: protobuf
+          batch-size: 1000
+          batch-timeout: 1s
+          compression-type: gzip
+
+    agent:
+      # Sampling strategies
+      sampling:
+        default_strategy:
+          type: probabilistic
+          param: 0.1
+        per_service_strategies:
+        - service: "odordiff-api"
+          type: adaptive
+          param: 1.0
+          max-traces-per-second: 100
+        - service: "odordiff-worker"
+          type: probabilistic  
+          param: 0.5
+        operation_strategies:
+        - operation: "/api/v1/generate"
+          type: probabilistic
+          param: 1.0
+        - operation: "/health"
+          type: probabilistic
+          param: 0.01
+
+    storage:
+      # Storage type (memory, elasticsearch, cassandra)
+      type: elasticsearch
+      elasticsearch:
+        server-urls: http://elasticsearch:9200
+        username: elastic
+        password: changeme
+        index-prefix: jaeger
+        tags-as-fields:
+          all: true
+        create-index-templates: true
+        version: 7
+        index-date-separator: "-"
+        num-shards: 1
+        num-replicas: 1
+        timeout: 5s
+        bulk:
+          size: 5000000
+          workers: 1
+          actions: 1000
+          flush-interval: 1s
+        tls:
+          enabled: false
+          skip-host-verify: false
+
+    # Span processing configuration
+    processors:
+      batch:
+        timeout: 1s
+        send_batch_size: 1024
+        send_batch_max_size: 2048
+      memory_limiter:
+        limit_mib: 512
+        spike_limit_mib: 128
+
+    # Metrics configuration
+    metrics:
+      backend: prometheus
+      http:
+        route: /metrics
+      prometheus:
+        namespace: jaeger
+        add_process_labels: true
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger-all-in-one
+  namespace: monitoring
+  labels:
+    app: jaeger
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: all-in-one
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "14269"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+      - name: jaeger-all-in-one
+        image: jaegertracing/all-in-one:1.50.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5775
+          protocol: UDP
+          name: zk-compact-trft
+        - containerPort: 6831
+          protocol: UDP
+          name: jg-compact-trft
+        - containerPort: 6832
+          protocol: UDP
+          name: jg-binary-trft
+        - containerPort: 5778
+          protocol: TCP
+          name: config-rest
+        - containerPort: 16686
+          protocol: TCP
+          name: query-http
+        - containerPort: 14268
+          protocol: TCP
+          name: c-tchan-trft
+        - containerPort: 14250
+          protocol: TCP
+          name: grpc
+        - containerPort: 14269
+          protocol: TCP
+          name: admin-http
+        env:
+        - name: COLLECTOR_OTLP_ENABLED
+          value: "true"
+        - name: COLLECTOR_ZIPKIN_HOST_PORT
+          value: ":9411"
+        - name: SPAN_STORAGE_TYPE
+          value: memory
+        - name: MEMORY_MAX_TRACES
+          value: "50000"
+        - name: QUERY_BASE_PATH
+          value: /jaeger
+        - name: METRICS_STORAGE_TYPE
+          value: prometheus
+        - name: PROMETHEUS_SERVER_URL
+          value: http://prometheus:9090
+        - name: PROMETHEUS_QUERY_SUPPORT_SPANMETRICS_CONNECTOR
+          value: "true"
+        - name: LOG_LEVEL
+          value: info
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        volumeMounts:
+        - name: jaeger-config
+          mountPath: /etc/jaeger/
+          readOnly: true
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 14269
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 14269
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+      volumes:
+      - name: jaeger-config
+        configMap:
+          name: jaeger-configuration
+      restartPolicy: Always
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-query
+  namespace: monitoring
+  labels:
+    app: jaeger
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: query
+spec:
+  type: ClusterIP
+  ports:
+  - port: 16686
+    protocol: TCP
+    targetPort: 16686
+    name: query-http
+  selector:
+    app: jaeger
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-collector
+  namespace: monitoring
+  labels:
+    app: jaeger
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: collector
+spec:
+  type: ClusterIP
+  ports:
+  - port: 14267
+    protocol: TCP
+    targetPort: 14267
+    name: c-tchan-trft
+  - port: 14268
+    protocol: TCP
+    targetPort: 14268
+    name: c-binary-trft
+  - port: 14250
+    protocol: TCP
+    targetPort: 14250
+    name: grpc
+  - port: 9411
+    protocol: TCP
+    targetPort: 9411
+    name: zipkin
+  selector:
+    app: jaeger
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger-agent
+  namespace: monitoring
+  labels:
+    app: jaeger
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: agent
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - port: 5775
+    protocol: UDP
+    targetPort: 5775
+    name: zk-compact-trft
+  - port: 6831
+    protocol: UDP
+    targetPort: 6831
+    name: jg-compact-trft
+  - port: 6832
+    protocol: UDP
+    targetPort: 6832
+    name: jg-binary-trft
+  - port: 5778
+    protocol: TCP
+    targetPort: 5778
+    name: config-rest
+  selector:
+    app: jaeger
+
+---
+# ServiceMonitor for Prometheus scraping
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: jaeger
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/component: servicemonitor
+spec:
+  selector:
+    matchLabels:
+      app: jaeger
+  endpoints:
+  - port: admin-http
+    interval: 30s
+    path: /metrics

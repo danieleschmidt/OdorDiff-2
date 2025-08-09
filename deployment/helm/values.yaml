@@ -1,0 +1,360 @@
+# Default values for odordiff-2 Helm chart
+# This is a YAML-formatted file with production-ready defaults
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+  
+# Image configuration
+image:
+  registry: docker.io
+  repository: odordiff2
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+  
+# Application configuration
+app:
+  name: odordiff-2
+  environment: production
+  logLevel: INFO
+  
+# Deployment configuration
+replicaCount: 3
+
+# Resource allocation
+resources:
+  api:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi" 
+      cpu: "1000m"
+  worker:
+    requests:
+      memory: "1.5Gi"
+      cpu: "1000m"
+    limits:
+      memory: "3Gi"
+      cpu: "2000m"
+
+# Auto-scaling configuration
+autoscaling:
+  api:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  worker:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 85
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8000
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+  hosts:
+  - host: api.odordiff.ai
+    paths:
+    - path: /
+      pathType: Prefix
+  tls:
+  - secretName: odordiff-tls
+    hosts:
+    - api.odordiff.ai
+
+# Security configuration
+security:
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+      - ALL
+
+# Network policies
+networkPolicy:
+  enabled: true
+  ingress:
+    enabled: true
+    from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  egress:
+    enabled: true
+    to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+
+# Database configuration
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "changeme"
+    username: "odordiff"
+    password: "changeme"
+    database: "odordiff"
+  architecture: standalone
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: "fast-ssd"
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+        cpu: 1000m
+    initdb:
+      scripts:
+        init.sql: |
+          CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+          CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+          CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_molecules_smiles ON molecules USING gin(smiles gin_trgm_ops);
+
+# Redis configuration  
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "changeme"
+  architecture: standalone
+  master:
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClass: "fast-ssd"
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 250m
+      limits:
+        memory: 512Mi
+        cpu: 500m
+    configuration: |-
+      maxmemory-policy allkeys-lru
+      save 900 1
+      save 300 10
+      save 60 10000
+
+# Monitoring configuration
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+      interval: 30s
+      path: /metrics
+    rules:
+      enabled: true
+  grafana:
+    enabled: true
+    adminPassword: "changeme"
+    dashboards:
+      enabled: true
+      provider:
+        name: default
+        folder: "OdorDiff-2"
+  jaeger:
+    enabled: true
+
+# Backup configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  retention: "7d"
+  storage:
+    size: 50Gi
+    storageClass: "standard"
+  s3:
+    enabled: false
+    bucket: ""
+    region: ""
+    accessKey: ""
+    secretKey: ""
+
+# Configuration for different environments
+environments:
+  development:
+    replicaCount: 1
+    resources:
+      api:
+        requests:
+          memory: "512Mi"
+          cpu: "250m"
+        limits:
+          memory: "1Gi"
+          cpu: "500m"
+    autoscaling:
+      api:
+        enabled: false
+      worker:
+        enabled: false
+    postgresql:
+      primary:
+        persistence:
+          size: 10Gi
+    redis:
+      master:
+        persistence:
+          size: 5Gi
+          
+  staging:
+    replicaCount: 2
+    resources:
+      api:
+        requests:
+          memory: "768Mi"
+          cpu: "375m"
+        limits:
+          memory: "1.5Gi"
+          cpu: "750m"
+    autoscaling:
+      api:
+        minReplicas: 2
+        maxReplicas: 10
+      worker:
+        minReplicas: 1
+        maxReplicas: 5
+    postgresql:
+      primary:
+        persistence:
+          size: 50Gi
+    redis:
+      master:
+        persistence:
+          size: 10Gi
+
+# Service mesh configuration (Istio)
+istio:
+  enabled: true
+  gateway:
+    enabled: true
+    hosts:
+    - "api.odordiff.ai"
+    tls:
+      mode: SIMPLE
+      credentialName: odordiff-tls
+  virtualService:
+    enabled: true
+    http:
+    - match:
+      - uri:
+          prefix: /
+      route:
+      - destination:
+          host: odordiff-api
+          port:
+            number: 80
+      timeout: 30s
+      retries:
+        attempts: 3
+        perTryTimeout: 10s
+  destinationRule:
+    enabled: true
+    trafficPolicy:
+      tls:
+        mode: ISTIO_MUTUAL
+      loadBalancer:
+        simple: LEAST_CONN
+      connectionPool:
+        tcp:
+          maxConnections: 100
+        http:
+          http1MaxPendingRequests: 100
+          maxRequestsPerConnection: 2
+      circuitBreaker:
+        consecutiveErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+
+# Persistent volumes
+persistence:
+  logs:
+    enabled: true
+    size: 10Gi
+    storageClass: "standard"
+    accessMode: ReadWriteMany
+  models:
+    enabled: true  
+    size: 50Gi
+    storageClass: "fast-ssd"
+    accessMode: ReadWriteOnce
+
+# Node assignment
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - odordiff-api
+        topologyKey: kubernetes.io/hostname
+
+# Init containers
+initContainers:
+  enabled: true
+  waitFor:
+    - postgresql
+    - redis
+
+# Sidecars
+sidecars:
+  enabled: false
+
+# Webhooks for deployment validation
+admissionWebhooks:
+  enabled: true
+  
+# Custom annotations and labels
+commonAnnotations: {}
+commonLabels: {}
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

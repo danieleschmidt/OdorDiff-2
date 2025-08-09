@@ -1,0 +1,645 @@
+# Database Performance Optimization for OdorDiff-2
+# Comprehensive database tuning and optimization strategies
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-performance-config
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: performance-config
+data:
+  postgresql.conf: |
+    # PostgreSQL Performance Optimization Configuration
+    # Optimized for OdorDiff-2 workload patterns
+    
+    # Memory Settings
+    shared_buffers = 256MB                    # 25% of available RAM
+    effective_cache_size = 1GB                # 75% of available RAM
+    work_mem = 16MB                           # Per connection work memory
+    maintenance_work_mem = 64MB               # Maintenance operations memory
+    
+    # Write Ahead Logging (WAL)
+    wal_buffers = 16MB                        # WAL buffer size
+    checkpoint_completion_target = 0.9        # Spread checkpoints
+    checkpoint_timeout = 10min                # Checkpoint timeout
+    max_wal_size = 2GB                        # Maximum WAL size
+    min_wal_size = 512MB                      # Minimum WAL size
+    wal_compression = on                      # Compress WAL records
+    
+    # Query Planner
+    random_page_cost = 1.1                    # SSD-optimized random access cost
+    effective_io_concurrency = 200            # SSD-optimized concurrent I/O
+    default_statistics_target = 100           # Statistics target for query planner
+    
+    # Connection Settings
+    max_connections = 200                     # Maximum connections
+    shared_preload_libraries = 'pg_stat_statements,pg_prewarm,auto_explain'
+    
+    # Logging
+    log_statement = 'mod'                     # Log all DDL and DML statements
+    log_min_duration_statement = 1000        # Log queries > 1 second
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_checkpoints = on
+    log_connections = on
+    log_disconnections = on
+    log_lock_waits = on
+    log_temp_files = 10MB
+    
+    # Auto VACUUM settings
+    autovacuum = on
+    autovacuum_max_workers = 3
+    autovacuum_naptime = 20s
+    autovacuum_vacuum_threshold = 50
+    autovacuum_vacuum_scale_factor = 0.1
+    autovacuum_analyze_threshold = 50
+    autovacuum_analyze_scale_factor = 0.05
+    
+    # Background Writer
+    bgwriter_delay = 200ms
+    bgwriter_lru_maxpages = 100
+    bgwriter_lru_multiplier = 2.0
+    
+    # Parallel Query Settings
+    max_parallel_workers_per_gather = 2
+    max_parallel_workers = 8
+    max_parallel_maintenance_workers = 2
+    
+    # Extension Settings
+    pg_stat_statements.max = 10000
+    pg_stat_statements.track = all
+    auto_explain.log_min_duration = 2000
+    auto_explain.log_analyze = true
+    auto_explain.log_verbose = true
+    auto_explain.log_buffers = true
+    auto_explain.log_wal = true
+
+  pg_hba.conf: |
+    # PostgreSQL Client Authentication Configuration
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    
+    # Local connections
+    local   all             all                                     trust
+    
+    # IPv4 local connections
+    host    all             all             127.0.0.1/32            scram-sha-256
+    host    all             all             10.0.0.0/8              scram-sha-256
+    host    all             all             172.16.0.0/12           scram-sha-256
+    host    all             all             192.168.0.0/16          scram-sha-256
+    
+    # IPv6 local connections
+    host    all             all             ::1/128                 scram-sha-256
+    
+    # Replication connections
+    host    replication     replicator      10.0.0.0/8              scram-sha-256
+
+  init-performance.sql: |
+    -- Initial Database Performance Setup
+    -- Create extensions for performance monitoring and optimization
+    
+    -- Enable required extensions
+    CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+    CREATE EXTENSION IF NOT EXISTS pg_prewarm;
+    CREATE EXTENSION IF NOT EXISTS btree_gin;
+    CREATE EXTENSION IF NOT EXISTS btree_gist;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+    CREATE EXTENSION IF NOT EXISTS uuid-ossp;
+    
+    -- Create performance monitoring views
+    CREATE OR REPLACE VIEW slow_queries AS
+    SELECT 
+        query,
+        calls,
+        total_exec_time,
+        mean_exec_time,
+        max_exec_time,
+        stddev_exec_time,
+        rows,
+        100.0 * shared_blks_hit / nullif(shared_blks_hit + shared_blks_read, 0) AS hit_percent
+    FROM pg_stat_statements 
+    WHERE calls > 10 
+    ORDER BY mean_exec_time DESC;
+    
+    CREATE OR REPLACE VIEW table_stats AS
+    SELECT 
+        schemaname,
+        tablename,
+        n_live_tup as live_tuples,
+        n_dead_tup as dead_tuples,
+        n_tup_ins + n_tup_upd + n_tup_del as total_writes,
+        seq_scan + idx_scan as total_reads,
+        CASE 
+            WHEN seq_scan + idx_scan > 0 
+            THEN round((100.0 * idx_scan / (seq_scan + idx_scan))::numeric, 2) 
+            ELSE 0 
+        END as index_usage_pct
+    FROM pg_stat_user_tables
+    ORDER BY total_writes DESC;
+    
+    CREATE OR REPLACE VIEW index_usage AS
+    SELECT 
+        schemaname,
+        tablename,
+        indexname,
+        idx_scan as index_scans,
+        idx_tup_read as tuples_read,
+        idx_tup_fetch as tuples_fetched,
+        pg_size_pretty(pg_relation_size(indexrelid)) as size
+    FROM pg_stat_user_indexes
+    ORDER BY idx_scan DESC;
+    
+    -- Create optimized indexes for OdorDiff-2 schema
+    -- These will be created when tables exist
+    
+    -- Function to analyze and recommend indexes
+    CREATE OR REPLACE FUNCTION recommend_indexes() 
+    RETURNS TABLE(
+        table_name text,
+        column_name text,
+        reason text,
+        suggested_index text
+    ) AS $$
+    BEGIN
+        RETURN QUERY
+        SELECT 
+            t.tablename::text,
+            a.attname::text,
+            'High selectivity column without index'::text,
+            'CREATE INDEX idx_' || t.tablename || '_' || a.attname || ' ON ' || t.tablename || ' (' || a.attname || ');'::text
+        FROM pg_tables t
+        JOIN pg_attribute a ON a.attrelid = (t.schemaname||'.'||t.tablename)::regclass
+        JOIN pg_stats s ON s.tablename = t.tablename AND s.attname = a.attname
+        LEFT JOIN pg_index i ON i.indrelid = a.attrelid AND a.attnum = ANY(i.indkey)
+        WHERE t.schemaname = 'public'
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND i.indrelid IS NULL  -- No existing index
+          AND s.n_distinct < -0.01  -- High selectivity
+          AND s.null_frac < 0.8;    -- Not mostly null
+    END;
+    $$ LANGUAGE plpgsql;
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-maintenance-scripts
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: maintenance
+data:
+  vacuum-analyze.sh: |
+    #!/bin/bash
+    # Intelligent VACUUM and ANALYZE script
+    set -euo pipefail
+    
+    PGHOST=${PGHOST:-localhost}
+    PGPORT=${PGPORT:-5432}
+    PGUSER=${PGUSER:-odordiff}
+    PGDATABASE=${PGDATABASE:-odordiff}
+    
+    log() {
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    }
+    
+    log "Starting database maintenance..."
+    
+    # Get list of tables that need maintenance
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -t -c "
+    SELECT schemaname||'.'||tablename 
+    FROM pg_stat_user_tables 
+    WHERE (n_dead_tup > 1000 AND n_dead_tup > n_live_tup * 0.1)
+       OR (last_vacuum IS NULL OR last_vacuum < NOW() - INTERVAL '7 days')
+       OR (last_analyze IS NULL OR last_analyze < NOW() - INTERVAL '1 day')
+    ORDER BY n_dead_tup DESC;
+    " | while read -r table; do
+        if [[ -n "$table" && "$table" != " " ]]; then
+            log "Processing table: $table"
+            
+            # Get table stats before maintenance
+            SIZE_BEFORE=$(psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -t -c \
+                "SELECT pg_size_pretty(pg_total_relation_size('$table'));")
+            
+            DEAD_TUPLES=$(psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -t -c \
+                "SELECT n_dead_tup FROM pg_stat_user_tables WHERE schemaname||'.'||tablename = '$table';")
+            
+            log "Table $table: Size=$SIZE_BEFORE, Dead tuples=$DEAD_TUPLES"
+            
+            # Perform VACUUM ANALYZE
+            if [[ ${DEAD_TUPLES:-0} -gt 10000 ]]; then
+                log "Running VACUUM FULL ANALYZE on $table (many dead tuples)"
+                psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -c "VACUUM FULL ANALYZE $table;"
+            else
+                log "Running VACUUM ANALYZE on $table"
+                psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -c "VACUUM ANALYZE $table;"
+            fi
+            
+            # Get table stats after maintenance
+            SIZE_AFTER=$(psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -t -c \
+                "SELECT pg_size_pretty(pg_total_relation_size('$table'));")
+            
+            log "Table $table maintenance completed: Size now=$SIZE_AFTER"
+        fi
+    done
+    
+    # Update table statistics
+    log "Updating database statistics..."
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -c "ANALYZE;"
+    
+    # Reindex if needed
+    log "Checking for bloated indexes..."
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -t -c "
+    SELECT schemaname||'.'||indexname
+    FROM pg_stat_user_indexes 
+    WHERE idx_scan = 0 
+      AND pg_relation_size(indexrelid) > 1024*1024  -- > 1MB
+    " | while read -r index; do
+        if [[ -n "$index" && "$index" != " " ]]; then
+            log "Reindexing unused large index: $index"
+            psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -c "REINDEX INDEX $index;" || true
+        fi
+    done
+    
+    log "Database maintenance completed successfully"
+
+  performance-report.sql: |
+    -- Generate comprehensive database performance report
+    \timing on
+    \pset pager off
+    
+    SELECT 'DATABASE PERFORMANCE REPORT - ' || current_timestamp AS report_header;
+    
+    -- Database size and connections
+    SELECT 'DATABASE OVERVIEW' AS section;
+    SELECT 
+        pg_database.datname AS database,
+        pg_size_pretty(pg_database_size(pg_database.datname)) AS size,
+        numbackends AS active_connections
+    FROM pg_database
+    LEFT JOIN pg_stat_database ON pg_database.datname = pg_stat_database.datname
+    WHERE pg_database.datname = current_database();
+    
+    -- Top 10 slowest queries
+    SELECT 'TOP 10 SLOWEST QUERIES' AS section;
+    SELECT 
+        round(mean_exec_time::numeric, 2) AS avg_time_ms,
+        round(total_exec_time::numeric, 2) AS total_time_ms,
+        calls,
+        query
+    FROM pg_stat_statements 
+    WHERE query NOT LIKE '%pg_stat_statements%'
+    ORDER BY mean_exec_time DESC 
+    LIMIT 10;
+    
+    -- Most frequently called queries
+    SELECT 'MOST FREQUENT QUERIES' AS section;
+    SELECT 
+        calls,
+        round(mean_exec_time::numeric, 2) AS avg_time_ms,
+        round(total_exec_time::numeric, 2) AS total_time_ms,
+        query
+    FROM pg_stat_statements 
+    WHERE query NOT LIKE '%pg_stat_statements%'
+    ORDER BY calls DESC 
+    LIMIT 10;
+    
+    -- Table statistics
+    SELECT 'TABLE STATISTICS' AS section;
+    SELECT 
+        schemaname,
+        tablename,
+        n_live_tup AS live_rows,
+        n_dead_tup AS dead_rows,
+        round((n_dead_tup::float / NULLIF(n_live_tup + n_dead_tup, 0) * 100)::numeric, 2) AS dead_row_pct,
+        n_tup_ins + n_tup_upd + n_tup_del AS total_writes,
+        seq_scan + idx_scan AS total_reads,
+        pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
+    FROM pg_stat_user_tables
+    ORDER BY n_live_tup DESC;
+    
+    -- Index usage statistics
+    SELECT 'INDEX USAGE STATISTICS' AS section;
+    SELECT 
+        schemaname,
+        tablename,
+        indexname,
+        idx_scan AS scans,
+        idx_tup_read AS tuples_read,
+        idx_tup_fetch AS tuples_fetched,
+        pg_size_pretty(pg_relation_size(indexrelid)) AS size
+    FROM pg_stat_user_indexes
+    ORDER BY idx_scan DESC;
+    
+    -- Cache hit ratios
+    SELECT 'CACHE HIT RATIOS' AS section;
+    SELECT 
+        'Buffer Cache' AS cache_type,
+        round((sum(heap_blks_hit) / NULLIF(sum(heap_blks_hit + heap_blks_read), 0) * 100)::numeric, 2) AS hit_ratio_pct
+    FROM pg_statio_user_tables
+    UNION ALL
+    SELECT 
+        'Index Cache' AS cache_type,
+        round((sum(idx_blks_hit) / NULLIF(sum(idx_blks_hit + idx_blks_read), 0) * 100)::numeric, 2) AS hit_ratio_pct
+    FROM pg_statio_user_indexes;
+    
+    -- Active and waiting queries
+    SELECT 'ACTIVE QUERIES' AS section;
+    SELECT 
+        pid,
+        usename,
+        application_name,
+        client_addr,
+        state,
+        extract(epoch from (now() - query_start))::int AS runtime_seconds,
+        left(query, 80) AS query_preview
+    FROM pg_stat_activity 
+    WHERE state != 'idle' 
+      AND query NOT LIKE '%pg_stat_activity%'
+    ORDER BY runtime_seconds DESC;
+    
+    -- Locks
+    SELECT 'CURRENT LOCKS' AS section;
+    SELECT 
+        mode,
+        locktype,
+        granted,
+        count(*)
+    FROM pg_locks 
+    GROUP BY mode, locktype, granted
+    ORDER BY count(*) DESC;
+
+---
+# Database Performance Monitoring CronJob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-performance-monitoring
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: database-monitoring
+    app.kubernetes.io/component: performance
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: database-monitoring
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+          serviceAccountName: database-monitoring-sa
+          restartPolicy: OnFailure
+          containers:
+          - name: performance-monitor
+            image: postgres:15-alpine
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            env:
+            - name: PGHOST
+              value: "postgres"
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-credentials
+                  key: password
+            - name: PGDATABASE
+              value: "odordiff"
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting database performance monitoring at $(date)"
+              
+              # Run performance report
+              psql -f /scripts/performance-report.sql > /tmp/performance-report.txt
+              
+              # Run maintenance script
+              /scripts/vacuum-analyze.sh
+              
+              # Check for slow queries and send alerts if needed
+              SLOW_QUERIES=$(psql -t -c "
+                SELECT COUNT(*) 
+                FROM pg_stat_statements 
+                WHERE mean_exec_time > 5000 AND calls > 10;
+              ")
+              
+              if [ "${SLOW_QUERIES}" -gt 5 ]; then
+                echo "ALERT: Found ${SLOW_QUERIES} slow queries (>5s average)"
+                # Send alert to monitoring system
+                curl -X POST "${SLACK_WEBHOOK_URL:-}" \
+                  -H 'Content-type: application/json' \
+                  -d "{\"text\": \"⚠️ OdorDiff-2 DB Performance Alert: ${SLOW_QUERIES} slow queries detected\"}" || true
+              fi
+              
+              # Check cache hit ratio
+              CACHE_HIT_RATIO=$(psql -t -c "
+                SELECT round((sum(heap_blks_hit) / NULLIF(sum(heap_blks_hit + heap_blks_read), 0) * 100)::numeric, 2)
+                FROM pg_statio_user_tables;
+              ")
+              
+              if (( $(echo "${CACHE_HIT_RATIO} < 95" | bc -l) )); then
+                echo "ALERT: Low cache hit ratio: ${CACHE_HIT_RATIO}%"
+                curl -X POST "${SLACK_WEBHOOK_URL:-}" \
+                  -H 'Content-type: application/json' \
+                  -d "{\"text\": \"⚠️ OdorDiff-2 DB Cache Alert: Hit ratio is ${CACHE_HIT_RATIO}% (target: >95%)\"}" || true
+              fi
+              
+              echo "Database performance monitoring completed at $(date)"
+            resources:
+              requests:
+                memory: 256Mi
+                cpu: 100m
+              limits:
+                memory: 512Mi
+                cpu: 250m
+            volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: tmp
+              mountPath: /tmp
+          volumes:
+          - name: scripts
+            configMap:
+              name: database-maintenance-scripts
+              defaultMode: 0755
+          - name: tmp
+            emptyDir:
+              sizeLimit: 100Mi
+
+---
+# Database Connection Pool Optimizer
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: pgbouncer
+    app.kubernetes.io/component: connection-pool
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9127"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+      - name: pgbouncer
+        image: pgbouncer/pgbouncer:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 5432
+          name: postgres
+        env:
+        - name: DATABASES_HOST
+          value: "postgres"
+        - name: DATABASES_PORT
+          value: "5432"
+        - name: DATABASES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: username
+        - name: DATABASES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-credentials
+              key: password
+        - name: DATABASES_DBNAME
+          value: "odordiff"
+        - name: POOL_MODE
+          value: "transaction"
+        - name: SERVER_RESET_QUERY
+          value: "DISCARD ALL"
+        - name: MAX_CLIENT_CONN
+          value: "200"
+        - name: DEFAULT_POOL_SIZE
+          value: "25"
+        - name: RESERVE_POOL_SIZE
+          value: "5"
+        - name: SERVER_LIFETIME
+          value: "3600"
+        - name: SERVER_IDLE_TIMEOUT
+          value: "600"
+        - name: LOG_CONNECTIONS
+          value: "1"
+        - name: LOG_DISCONNECTIONS
+          value: "1"
+        - name: LOG_POOLER_ERRORS
+          value: "1"
+        resources:
+          requests:
+            memory: 64Mi
+            cpu: 50m
+          limits:
+            memory: 128Mi
+            cpu: 100m
+        livenessProbe:
+          tcpSocket:
+            port: 5432
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          tcpSocket:
+            port: 5432
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      # PgBouncer Exporter for Prometheus
+      - name: pgbouncer-exporter
+        image: prometheuscommunity/pgbouncer-exporter:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        ports:
+        - containerPort: 9127
+          name: metrics
+        env:
+        - name: PGBOUNCER_EXPORTER_HOST
+          value: "localhost"
+        - name: PGBOUNCER_EXPORTER_PORT
+          value: "5432"
+        - name: PGBOUNCER_EXPORTER_USER
+          value: "pgbouncer"
+        - name: PGBOUNCER_EXPORTER_PASSWORD
+          value: "pgbouncer"
+        resources:
+          requests:
+            memory: 32Mi
+            cpu: 10m
+          limits:
+            memory: 64Mi
+            cpu: 50m
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 10Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: pgbouncer
+    app.kubernetes.io/component: connection-pool
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5432
+    targetPort: 5432
+    protocol: TCP
+    name: postgres
+  - port: 9127
+    targetPort: 9127
+    protocol: TCP
+    name: metrics
+  selector:
+    app: pgbouncer

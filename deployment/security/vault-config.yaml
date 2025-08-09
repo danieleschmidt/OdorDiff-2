@@ -1,0 +1,461 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-config
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: config
+data:
+  vault.hcl: |
+    # HashiCorp Vault Configuration for OdorDiff-2
+    # Production-ready configuration with high availability
+    
+    cluster_name = "odordiff-vault"
+    
+    # API listener
+    listener "tcp" {
+      address       = "0.0.0.0:8200"
+      tls_cert_file = "/vault/tls/server.crt"
+      tls_key_file  = "/vault/tls/server.key"
+      tls_client_ca_file = "/vault/tls/ca.crt"
+      
+      # Security headers
+      tls_min_version = "tls12"
+      tls_cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305"
+      
+      # Additional security
+      tls_require_and_verify_client_cert = false
+      tls_disable_client_certs = false
+    }
+    
+    # Storage backend - Using Integrated Storage (Raft)
+    storage "raft" {
+      path    = "/vault/data"
+      node_id = "vault-0"
+      
+      # Cluster configuration
+      retry_join {
+        leader_api_addr = "https://vault-1.vault-internal:8200"
+        leader_ca_cert_file = "/vault/tls/ca.crt"
+        leader_client_cert_file = "/vault/tls/client.crt"
+        leader_client_key_file = "/vault/tls/client.key"
+      }
+      
+      retry_join {
+        leader_api_addr = "https://vault-2.vault-internal:8200"
+        leader_ca_cert_file = "/vault/tls/ca.crt"
+        leader_client_cert_file = "/vault/tls/client.crt"
+        leader_client_key_file = "/vault/tls/client.key"
+      }
+    }
+    
+    # High availability
+    api_addr = "https://vault.security.svc.cluster.local:8200"
+    cluster_addr = "https://vault-0.vault-internal:8201"
+    
+    # UI
+    ui = true
+    
+    # Logging
+    log_level = "Info"
+    log_format = "json"
+    
+    # Telemetry
+    telemetry {
+      prometheus_retention_time = "30s"
+      disable_hostname = true
+      enable_hostname_label = false
+    }
+    
+    # Seal configuration (Auto-unseal with cloud KMS)
+    seal "awskms" {
+      region     = "us-west-2"
+      kms_key_id = "arn:aws:kms:us-west-2:123456789012:key/12345678-1234-1234-1234-123456789012"
+      endpoint   = "https://kms.us-west-2.amazonaws.com"
+    }
+    
+    # Entropy augmentation
+    entropy "seal" {
+      mode = "augmentation"
+    }
+    
+    # Performance and limits
+    max_lease_ttl = "8760h"  # 1 year
+    default_lease_ttl = "768h"  # 32 days
+    cluster_cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+    
+    # Disable mlock for Kubernetes
+    disable_mlock = true
+    
+    # Plugin directory
+    plugin_directory = "/vault/plugins"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-policies
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: policies
+data:
+  # OdorDiff-2 API policy
+  odordiff-api-policy.hcl: |
+    # Policy for OdorDiff-2 API service
+    path "kv/data/odordiff/api/*" {
+      capabilities = ["read"]
+    }
+    
+    path "kv/data/odordiff/database/*" {
+      capabilities = ["read"]
+    }
+    
+    path "kv/data/odordiff/redis/*" {
+      capabilities = ["read"]
+    }
+    
+    path "kv/data/odordiff/monitoring/*" {
+      capabilities = ["read"]
+    }
+    
+    path "transit/encrypt/odordiff" {
+      capabilities = ["update"]
+    }
+    
+    path "transit/decrypt/odordiff" {
+      capabilities = ["update"]
+    }
+    
+    path "auth/token/lookup-self" {
+      capabilities = ["read"]
+    }
+    
+    path "auth/token/renew-self" {
+      capabilities = ["update"]
+    }
+    
+    path "sys/capabilities-self" {
+      capabilities = ["update"]
+    }
+
+  # Database admin policy
+  database-admin-policy.hcl: |
+    # Policy for database administration
+    path "kv/data/odordiff/database/admin/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    path "database/config/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    path "database/roles/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    path "database/creds/*" {
+      capabilities = ["read"]
+    }
+
+  # Monitoring policy
+  monitoring-policy.hcl: |
+    # Policy for monitoring services
+    path "kv/data/odordiff/monitoring/*" {
+      capabilities = ["read"]
+    }
+    
+    path "kv/data/odordiff/grafana/*" {
+      capabilities = ["read"]
+    }
+    
+    path "kv/data/odordiff/prometheus/*" {
+      capabilities = ["read"]
+    }
+    
+    path "sys/health" {
+      capabilities = ["read", "sudo"]
+    }
+    
+    path "sys/metrics" {
+      capabilities = ["read"]
+    }
+
+  # DevOps policy
+  devops-policy.hcl: |
+    # Policy for DevOps operations
+    path "kv/data/odordiff/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    path "kv/metadata/odordiff/*" {
+      capabilities = ["read", "list"]
+    }
+    
+    path "auth/kubernetes/role/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+    
+    path "sys/auth/kubernetes" {
+      capabilities = ["create", "read", "update", "delete", "sudo"]
+    }
+    
+    path "sys/policies/acl/*" {
+      capabilities = ["create", "read", "update", "delete", "list"]
+    }
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: vault
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: server
+spec:
+  serviceName: vault-internal
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+      app.kubernetes.io/component: server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vault
+        app.kubernetes.io/component: server
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8200"
+        prometheus.io/path: "/v1/sys/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+      serviceAccountName: vault
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: vault
+        image: hashicorp/vault:1.15.2
+        imagePullPolicy: IfNotPresent
+        command:
+        - "/bin/sh"
+        - "-ec"
+        args:
+        - |
+          cp /vault/config/vault.hcl /tmp/storageconfig.hcl;
+          [ -n "${HOST_IP}" ] && sed -Ei "s|HOST_IP|${HOST_IP?}|g" /tmp/storageconfig.hcl;
+          [ -n "${POD_IP}" ] && sed -Ei "s|POD_IP|${POD_IP?}|g" /tmp/storageconfig.hcl;
+          [ -n "${HOSTNAME}" ] && sed -Ei "s|HOSTNAME|${HOSTNAME?}|g" /tmp/storageconfig.hcl;
+          [ -n "${API_ADDR}" ] && sed -Ei "s|API_ADDR|${API_ADDR?}|g" /tmp/storageconfig.hcl;
+          [ -n "${TRANSIT_ADDR}" ] && sed -Ei "s|TRANSIT_ADDR|${TRANSIT_ADDR?}|g" /tmp/storageconfig.hcl;
+          [ -n "${RAFT_ADDR}" ] && sed -Ei "s|RAFT_ADDR|${RAFT_ADDR?}|g" /tmp/storageconfig.hcl;
+          /usr/local/bin/docker-entrypoint.sh vault server -config=/tmp/storageconfig.hcl
+        env:
+        - name: HOST_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: API_ADDR
+          value: "https://$(HOSTNAME).vault-internal:8200"
+        - name: TRANSIT_ADDR
+          value: "https://$(HOSTNAME).vault-internal:8201"
+        - name: RAFT_ADDR
+          value: "https://$(HOSTNAME).vault-internal:8201"
+        - name: VAULT_CLUSTER_ADDR
+          value: "https://$(HOSTNAME).vault-internal:8201"
+        - name: VAULT_RAFT_NODE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: VAULT_LOCAL_CONFIG
+          value: |
+            {
+              "log_level": "INFO",
+              "log_format": "json",
+              "ui": true
+            }
+        - name: VAULT_API_ADDR
+          value: "https://$(POD_IP):8200"
+        - name: SKIP_CHOWN
+          value: "true"
+        - name: SKIP_SETCAP
+          value: "true"
+        - name: VAULT_SEAL_TYPE
+          value: "awskms"
+        ports:
+        - containerPort: 8200
+          name: https
+        - containerPort: 8201
+          name: https-internal
+        - containerPort: 8202
+          name: https-rep
+        volumeMounts:
+        - name: data
+          mountPath: /vault/data
+        - name: config
+          mountPath: /vault/config
+        - name: tls
+          mountPath: /vault/tls
+          readOnly: true
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+          limits:
+            memory: 1Gi
+            cpu: 500m
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: "/v1/sys/health?standbyok=true"
+            port: 8200
+            scheme: HTTPS
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+            port: 8200
+            scheme: HTTPS
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: config
+        configMap:
+          name: vault-config
+      - name: tls
+        secret:
+          secretName: vault-tls
+          defaultMode: 420
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 10Gi
+      storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: server
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: ClusterIP
+  publishNotReadyAddresses: true
+  ports:
+  - name: https
+    port: 8200
+    targetPort: 8200
+  - name: https-internal
+    port: 8201
+    targetPort: 8201
+  selector:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: server
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault-internal
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: server
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+  - name: https
+    port: 8200
+    targetPort: 8200
+  - name: https-internal
+    port: 8201
+    targetPort: 8201
+  selector:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: server
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vault
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vault-server-binding
+  labels:
+    app.kubernetes.io/name: vault
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+- kind: ServiceAccount
+  name: vault
+  namespace: security
+
+---
+# Vault Injector Webhook
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionWebhook
+metadata:
+  name: vault-agent-injector-cfg
+  labels:
+    app.kubernetes.io/name: vault-agent-injector
+webhooks:
+- name: vault.hashicorp.com
+  clientConfig:
+    service:
+      name: vault-agent-injector-svc
+      namespace: security
+      path: "/mutate"
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  admissionReviewVersions: ["v1", "v1beta1"]
+  sideEffects: None
+  failurePolicy: Ignore

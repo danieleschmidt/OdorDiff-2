@@ -1,0 +1,606 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "OdorDiff-2 Production Overview",
+    "tags": ["odordiff", "production", "ai"],
+    "style": "dark",
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "API Request Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"odordiff-api\"}[5m])",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "displayMode": "list",
+              "orientation": "horizontal"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 10},
+                {"color": "red", "value": 100}
+              ]
+            },
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Error Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"odordiff-api\",status=~\"5..\"}[5m]) / rate(http_requests_total{job=\"odordiff-api\"}[5m])",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 0.01},
+                {"color": "red", "value": 0.05}
+              ]
+            },
+            "unit": "percentunit"
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Response Time (95th percentile)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"odordiff-api\"}[5m]))",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1.0},
+                {"color": "red", "value": 2.0}
+              ]
+            },
+            "unit": "s"
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "Active Users",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "odordiff_active_users",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0}
+      },
+      {
+        "id": 5,
+        "title": "HTTP Requests Over Time",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"odordiff-api\"}[5m])",
+            "refId": "A",
+            "legendFormat": "{{method}} {{status}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            },
+            "unit": "reqps"
+          }
+        },
+        "gridPos": {"h": 9, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 6,
+        "title": "Response Time Percentiles",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job=\"odordiff-api\"}[5m]))",
+            "refId": "A",
+            "legendFormat": "50th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"odordiff-api\"}[5m]))",
+            "refId": "B",
+            "legendFormat": "95th percentile"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"odordiff-api\"}[5m]))",
+            "refId": "C",
+            "legendFormat": "99th percentile"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            },
+            "unit": "s"
+          }
+        },
+        "gridPos": {"h": 9, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 7,
+        "title": "System Resources",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(container_cpu_usage_seconds_total{pod=~\"odordiff-api.*\"}[5m])",
+            "refId": "A",
+            "legendFormat": "CPU Usage - {{pod}}"
+          },
+          {
+            "expr": "container_memory_working_set_bytes{pod=~\"odordiff-api.*\"} / 1024 / 1024 / 1024",
+            "refId": "B",
+            "legendFormat": "Memory Usage - {{pod}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            }
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byRegexp",
+                "options": "/Memory.*/"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "decgbytes"
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byRegexp",
+                "options": "/CPU.*/"
+              },
+              "properties": [
+                {
+                  "id": "unit",
+                  "value": "percent"
+                }
+              ]
+            }
+          ]
+        },
+        "gridPos": {"h": 9, "w": 24, "x": 0, "y": 17}
+      },
+      {
+        "id": 8,
+        "title": "AI Model Metrics",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(odordiff_generation_requests_total[5m])",
+            "refId": "A",
+            "legendFormat": "Generation Requests"
+          },
+          {
+            "expr": "rate(odordiff_generation_success_total[5m])",
+            "refId": "B",
+            "legendFormat": "Successful Generations"
+          },
+          {
+            "expr": "rate(odordiff_generation_failures_total[5m])",
+            "refId": "C",
+            "legendFormat": "Failed Generations"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            },
+            "unit": "ops"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26}
+      },
+      {
+        "id": 9,
+        "title": "Worker Queue Status",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "celery_queue_length{queue=\"default\"}",
+            "refId": "A",
+            "legendFormat": "Queue Length"
+          },
+          {
+            "expr": "celery_workers_active",
+            "refId": "B",
+            "legendFormat": "Active Workers"
+          },
+          {
+            "expr": "rate(celery_task_total[5m])",
+            "refId": "C",
+            "legendFormat": "Task Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            },
+            "unit": "short"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26}
+      },
+      {
+        "id": 10,
+        "title": "Database Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(pg_stat_database_tup_fetched[5m])",
+            "refId": "A",
+            "legendFormat": "Rows Fetched/sec"
+          },
+          {
+            "expr": "rate(pg_stat_database_tup_inserted[5m])",
+            "refId": "B",
+            "legendFormat": "Rows Inserted/sec"
+          },
+          {
+            "expr": "pg_stat_database_numbackends",
+            "refId": "C",
+            "legendFormat": "Active Connections"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            },
+            "unit": "ops"
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34}
+      },
+      {
+        "id": 11,
+        "title": "Cache Performance",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "rate(redis_commands_total[5m])",
+            "refId": "A",
+            "legendFormat": "Commands/sec"
+          },
+          {
+            "expr": "redis_cache_hit_ratio",
+            "refId": "B",
+            "legendFormat": "Hit Ratio"
+          },
+          {
+            "expr": "redis_memory_used_bytes / 1024 / 1024",
+            "refId": "C",
+            "legendFormat": "Memory Usage (MB)"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "axisLabel": "",
+              "axisPlacement": "auto",
+              "barAlignment": 0,
+              "drawStyle": "line",
+              "fillOpacity": 10,
+              "gradientMode": "none",
+              "hideFrom": {
+                "legend": false,
+                "tooltip": false,
+                "vis": false
+              },
+              "lineInterpolation": "linear",
+              "lineWidth": 1,
+              "pointSize": 5,
+              "scaleDistribution": {
+                "type": "linear"
+              },
+              "showPoints": "never",
+              "spanNulls": false,
+              "stacking": {
+                "group": "A",
+                "mode": "none"
+              },
+              "thresholdsStyle": {
+                "mode": "off"
+              }
+            },
+            "mappings": [],
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "OdorDiff-2 Production Dashboard",
+    "uid": "odordiff-2-prod",
+    "version": 1,
+    "weekStart": ""
+  }
+}

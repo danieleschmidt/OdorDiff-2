@@ -1,0 +1,148 @@
+# Production-grade multi-stage Docker build for OdorDiff-2
+# Optimized for security, performance, and minimal attack surface
+
+ARG PYTHON_VERSION=3.11-slim
+ARG BUILD_DATE
+ARG VCS_REF
+ARG VERSION
+
+# =============================================================================
+# Builder stage - Install dependencies and build optimized artifacts
+# =============================================================================
+FROM python:${PYTHON_VERSION} as builder
+
+LABEL maintainer="daniel@terragonlabs.ai"
+LABEL org.opencontainers.image.title="OdorDiff-2 Builder"
+LABEL org.opencontainers.image.description="Safe Text-to-Scent Molecule Diffusion - Builder Stage"
+LABEL org.opencontainers.image.version=${VERSION}
+LABEL org.opencontainers.image.created=${BUILD_DATE}
+LABEL org.opencontainers.image.revision=${VCS_REF}
+LABEL org.opencontainers.image.source="https://github.com/danieleschmidt/odordiff-2"
+
+# Security: Create non-root user
+RUN groupadd --gid 1000 odordiff && \
+    useradd --uid 1000 --gid odordiff --shell /bin/bash --create-home odordiff
+
+# Install system dependencies for building Python packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    python3-dev \
+    libffi-dev \
+    libssl-dev \
+    cargo \
+    pkg-config \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml setup.py requirements.txt ./
+
+# Create virtual environment and install dependencies
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip and install wheel
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install production dependencies only
+RUN pip install --no-cache-dir -e .[deploy,monitoring] \
+    && pip install --no-cache-dir \
+    gunicorn[gevent]==21.2.0 \
+    supervisor==4.2.5 \
+    newrelic==9.1.0
+
+# Copy source code
+COPY . .
+
+# Build optimized Python bytecode
+RUN python -m compileall odordiff2/ -b && \
+    find . -name "*.py" -not -path "./tests/*" -delete && \
+    find . -name "*.pyc" -path "./tests/*" -delete
+
+# =============================================================================
+# Production runtime stage - Minimal and secure
+# =============================================================================
+FROM python:${PYTHON_VERSION} as production
+
+LABEL maintainer="daniel@terragonlabs.ai"
+LABEL org.opencontainers.image.title="OdorDiff-2"
+LABEL org.opencontainers.image.description="Safe Text-to-Scent Molecule Diffusion - Production Runtime"
+LABEL org.opencontainers.image.version=${VERSION}
+LABEL org.opencontainers.image.created=${BUILD_DATE}
+LABEL org.opencontainers.image.revision=${VCS_REF}
+LABEL org.opencontainers.image.source="https://github.com/danieleschmidt/odordiff-2"
+LABEL org.opencontainers.image.licenses="MIT"
+
+# Security: Install security updates only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tini \
+    curl \
+    dumb-init \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Security: Create non-root user with minimal privileges
+RUN groupadd --gid 1000 odordiff && \
+    useradd --uid 1000 --gid odordiff --shell /bin/bash --create-home odordiff --no-log-init
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Set working directory
+WORKDIR /app
+
+# Copy application code from builder
+COPY --from=builder --chown=odordiff:odordiff /app ./
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/data /app/tmp /app/models \
+    && chown -R odordiff:odordiff /app \
+    && chmod -R 755 /app \
+    && chmod 750 /app/logs /app/data /app/tmp /app/models
+
+# Copy configuration files
+COPY deployment/docker/supervisor.conf /etc/supervisor/conf.d/odordiff.conf
+COPY deployment/docker/gunicorn.conf.py /app/gunicorn.conf.py
+COPY deployment/docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Security: Switch to non-root user
+USER odordiff
+
+# Expose port
+EXPOSE 8000
+
+# Environment variables
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONHASHSEED=random \
+    WORKERS=4 \
+    WORKER_CLASS=gevent \
+    WORKER_CONNECTIONS=1000 \
+    MAX_REQUESTS=1000 \
+    MAX_REQUESTS_JITTER=50 \
+    TIMEOUT=30 \
+    KEEPALIVE=5 \
+    PRELOAD=true \
+    LOG_LEVEL=INFO \
+    ACCESS_LOG_FORMAT='%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s" %(D)s'
+
+# Use tini as init system for proper signal handling
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
+CMD ["gunicorn", "--config", "gunicorn.conf.py", "odordiff2.api.endpoints:app"]

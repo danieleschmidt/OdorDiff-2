@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: odordiff2
+  labels:
+    name: odordiff2
+    app: odordiff2
+    version: v3.0
+    environment: production

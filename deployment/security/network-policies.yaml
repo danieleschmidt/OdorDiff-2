@@ -1,0 +1,538 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: odordiff-api-network-policy
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: odordiff-api
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: 8000
+  # Allow ingress from monitoring namespace for metrics scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8000
+  # Allow ingress from same namespace (service mesh)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    ports:
+    - protocol: TCP
+      port: 8000
+  egress:
+  # Allow egress to PostgreSQL
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow egress to Redis
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow egress to Vault for secrets
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: security
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow egress to monitoring services
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus
+    - protocol: TCP
+      port: 14268 # Jaeger
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for HTTPS to external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow egress for HTTP health checks
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: odordiff-worker-network-policy
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: odordiff-2
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: odordiff-worker
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from monitoring namespace for metrics scraping
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090  # Metrics port
+  # Allow ingress from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    ports:
+    - protocol: TCP
+      port: 9090
+  egress:
+  # Allow egress to PostgreSQL
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow egress to Redis
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow egress to Vault
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: security
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow egress to monitoring
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 14268 # Jaeger
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for HTTPS
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-network-policy
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: postgresql
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: postgresql
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from OdorDiff services
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: odordiff-api
+    ports:
+    - protocol: TCP
+      port: 5432
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: odordiff-worker
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow ingress from monitoring (postgres-exporter)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 5432
+  egress:
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for replication (if needed)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-network-policy
+  namespace: odordiff
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from OdorDiff services
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: odordiff-api
+    ports:
+    - protocol: TCP
+      port: 6379
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: odordiff-worker
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow ingress from monitoring (redis-exporter)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 6379
+  egress:
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for cluster communication
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+    - protocol: TCP
+      port: 16379  # Cluster bus port
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vault-network-policy
+  namespace: security
+  labels:
+    app.kubernetes.io/name: vault
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from application namespaces
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow ingress from monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: 8200
+  # Allow ingress for cluster communication
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: security
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+    - protocol: TCP
+      port: 8201
+  egress:
+  # Allow egress to Kubernetes API server
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for KMS (if using cloud auto-unseal)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow egress for cluster communication
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: security
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+    - protocol: TCP
+      port: 8201
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-network-policy
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: monitoring
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector: {}  # Apply to all pods in monitoring namespace
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: 3000   # Grafana
+    - protocol: TCP
+      port: 9090   # Prometheus
+    - protocol: TCP
+      port: 16686  # Jaeger
+  # Allow ingress from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  egress:
+  # Allow egress to scrape metrics from all namespaces
+  - to:
+    - namespaceSelector: {}
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-network-policy
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/component: network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow all ingress traffic (external traffic)
+  - {}
+  egress:
+  # Allow egress to all application namespaces
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: odordiff
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - namespaceSelector:
+        matchLabels:
+          name: security
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow egress for external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# Default deny all policy for enhanced security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: odordiff
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: security
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: monitoring
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
