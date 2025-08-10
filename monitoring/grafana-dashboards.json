@@ -1,0 +1,406 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "OdorDiff-2 Monitoring Dashboard",
+    "tags": ["odordiff", "monitoring", "performance"],
+    "style": "dark",
+    "timezone": "utc",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Overview",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "up{job=\"odordiff2-api\"}",
+            "legendFormat": "API Service Status"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "none",
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Molecules Generated",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [
+          {
+            "expr": "increase(odordiff_molecules_generated_total[5m])",
+            "legendFormat": "Molecules per 5min"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Generation Response Time",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(odordiff_generation_time_seconds_bucket[5m]))",
+            "legendFormat": "P50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(odordiff_generation_time_seconds_bucket[5m]))",
+            "legendFormat": "P95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(odordiff_generation_time_seconds_bucket[5m]))",
+            "legendFormat": "P99"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Seconds",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Safety Filter Performance",
+        "type": "singlestat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [
+          {
+            "expr": "rate(odordiff_safety_checks_passed_total[5m]) / rate(odordiff_safety_checks_total[5m])",
+            "legendFormat": "Safety Pass Rate"
+          }
+        ],
+        "format": "percentunit",
+        "thresholds": "0.9,0.95"
+      },
+      {
+        "id": 5,
+        "title": "API Request Rate",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 12},
+        "targets": [
+          {
+            "expr": "rate(odordiff_api_requests_total[5m])",
+            "legendFormat": "{{method}} {{endpoint}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Error Rate",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 12},
+        "targets": [
+          {
+            "expr": "rate(odordiff_api_requests_total{status=~\"5..\"}[5m]) / rate(odordiff_api_requests_total[5m])",
+            "legendFormat": "5xx Error Rate"
+          },
+          {
+            "expr": "rate(odordiff_api_requests_total{status=~\"4..\"}[5m]) / rate(odordiff_api_requests_total[5m])",
+            "legendFormat": "4xx Error Rate"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Error Rate",
+            "min": 0,
+            "max": 1
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "System Resources",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 12},
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total{job=\"odordiff2-api\"}[5m]) * 100",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "process_resident_memory_bytes{job=\"odordiff2-api\"} / 1024 / 1024",
+            "legendFormat": "Memory Usage MB"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Usage",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Cache Performance",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 18},
+        "targets": [
+          {
+            "expr": "rate(odordiff_cache_hits_total[5m]) / (rate(odordiff_cache_hits_total[5m]) + rate(odordiff_cache_misses_total[5m]))",
+            "legendFormat": "Cache Hit Rate"
+          },
+          {
+            "expr": "odordiff_cache_size_bytes / 1024 / 1024",
+            "legendFormat": "Cache Size MB"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Hit Rate / Size",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Auto-Scaling Activity",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 18},
+        "targets": [
+          {
+            "expr": "odordiff_replicas_current",
+            "legendFormat": "Current Replicas"
+          },
+          {
+            "expr": "odordiff_replicas_desired",
+            "legendFormat": "Desired Replicas"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Replicas",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "title": "Database Performance",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "rate(odordiff_db_queries_total[5m])",
+            "legendFormat": "Queries/sec"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(odordiff_db_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "P95 Query Time"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "QPS / Seconds",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Security Events",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 8, "x": 8, "y": 24},
+        "targets": [
+          {
+            "expr": "rate(odordiff_security_events_total[5m])",
+            "legendFormat": "{{event_type}}"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Events/sec",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Model Loading Status",
+        "type": "stat",
+        "gridPos": {"h": 6, "w": 8, "x": 16, "y": 24},
+        "targets": [
+          {
+            "expr": "odordiff_model_loaded",
+            "legendFormat": "Model Loaded"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"},
+            "unit": "none",
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "green", "value": 1}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "Generation Queue Length",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 30},
+        "targets": [
+          {
+            "expr": "odordiff_generation_queue_size",
+            "legendFormat": "Queue Length"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Queue Size",
+            "min": 0
+          }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {
+                "params": [100],
+                "type": "gt"
+              },
+              "operator": {
+                "type": "and"
+              },
+              "query": {
+                "params": ["A", "5m", "now"]
+              },
+              "reducer": {
+                "params": [],
+                "type": "avg"
+              },
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "for": "5m",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "Generation Queue Length Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 14,
+        "title": "Synthesis Success Rate",
+        "type": "singlestat",
+        "gridPos": {"h": 6, "w": 12, "x": 12, "y": 30},
+        "targets": [
+          {
+            "expr": "rate(odordiff_synthesis_success_total[5m]) / rate(odordiff_synthesis_attempts_total[5m])",
+            "legendFormat": "Synthesis Success Rate"
+          }
+        ],
+        "format": "percentunit",
+        "thresholds": "0.7,0.85",
+        "colorBackground": true
+      },
+      {
+        "id": 15,
+        "title": "Top Requested Scent Categories",
+        "type": "piechart",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+        "targets": [
+          {
+            "expr": "topk(10, rate(odordiff_generation_requests_total[1h]))",
+            "legendFormat": "{{scent_category}}"
+          }
+        ]
+      },
+      {
+        "id": 16,
+        "title": "User Activity Heatmap",
+        "type": "heatmap",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+        "targets": [
+          {
+            "expr": "increase(odordiff_api_requests_total[1h])",
+            "legendFormat": "{{hour}}"
+          }
+        ],
+        "dataFormat": "timeseries",
+        "heatmap": {
+          "yAxis": {
+            "min": 0,
+            "max": 24
+          }
+        }
+      }
+    ],
+    "templating": {
+      "list": [
+        {
+          "allValue": null,
+          "current": {
+            "text": "All",
+            "value": "$__all"
+          },
+          "datasource": "prometheus",
+          "definition": "label_values(odordiff_api_requests_total, instance)",
+          "hide": 0,
+          "includeAll": true,
+          "multi": false,
+          "name": "instance",
+          "options": [],
+          "query": "label_values(odordiff_api_requests_total, instance)",
+          "refresh": 1,
+          "regex": "",
+          "sort": 0,
+          "type": "query"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "datasource": "prometheus",
+          "enable": true,
+          "expr": "changes(odordiff_model_version[1d]) > 0",
+          "iconColor": "blue",
+          "name": "Model Deployments",
+          "titleFormat": "Model Updated",
+          "textFormat": "New model version deployed"
+        },
+        {
+          "datasource": "prometheus",
+          "enable": true,
+          "expr": "increase(odordiff_security_events_total{severity=\"high\"}[5m]) > 0",
+          "iconColor": "red",
+          "name": "Security Alerts",
+          "titleFormat": "Security Event",
+          "textFormat": "High severity security event detected"
+        }
+      ]
+    }
+  }
+}
