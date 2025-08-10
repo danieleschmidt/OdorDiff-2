@@ -1,0 +1,347 @@
+# Complete Production Deployment Configuration for OdorDiff-2
+# This file provides comprehensive production deployment setup
+
+version: '3.8'
+
+services:
+  # Main API Service
+  odordiff2-api:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.production
+    image: odordiff2/api:1.0.0
+    container_name: odordiff2-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - MODEL_PATH=/app/models
+      - CACHE_BACKEND=redis
+      - MONITORING_ENABLED=true
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./models:/app/models:ro
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      - postgresql
+      - redis
+      - prometheus
+    networks:
+      - odordiff-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 2G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
+  # Load Balancer
+  nginx-lb:
+    image: nginx:1.24-alpine
+    container_name: odordiff2-lb
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/ssl/certs:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - odordiff2-api
+    networks:
+      - odordiff-network
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # PostgreSQL Database
+  postgresql:
+    image: postgres:15-alpine
+    container_name: odordiff2-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=odordiff2
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS="--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+      - ./backups:/backups
+    networks:
+      - odordiff-network
+    ports:
+      - "5432:5432"  # Only for debugging, remove in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d odordiff2"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: odordiff2-cache
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+      - ./config/redis.conf:/etc/redis/redis.conf:ro
+    networks:
+      - odordiff-network
+    ports:
+      - "6379:6379"  # Only for debugging, remove in production
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: odordiff2-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerting-rules.yml:/etc/prometheus/alerting-rules.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - odordiff-network
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Grafana Dashboards
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: odordiff2-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboards.json:/etc/grafana/provisioning/dashboards/odordiff2.json:ro
+      - ./monitoring/datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+    networks:
+      - odordiff-network
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Jaeger Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.47
+    container_name: odordiff2-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - odordiff-network
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector
+      - "6831:6831/udp"  # Jaeger agent
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:16686/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Celery Worker for Background Tasks
+  celery-worker:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.production
+    image: odordiff2/api:1.0.0
+    container_name: odordiff2-worker
+    restart: unless-stopped
+    command: celery -A odordiff2.scaling.celery_tasks worker --loglevel=info --concurrency=4
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - CELERY_BROKER_URL=${REDIS_URL}
+      - CELERY_RESULT_BACKEND=${REDIS_URL}
+    volumes:
+      - ./models:/app/models:ro
+      - ./logs:/app/logs
+    depends_on:
+      - postgresql
+      - redis
+    networks:
+      - odordiff-network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # Celery Beat Scheduler
+  celery-beat:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.production
+    image: odordiff2/api:1.0.0
+    container_name: odordiff2-scheduler
+    restart: unless-stopped
+    command: celery -A odordiff2.scaling.celery_tasks beat --loglevel=info
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - SECRET_KEY=${SECRET_KEY}
+      - CELERY_BROKER_URL=${REDIS_URL}
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      - postgresql
+      - redis
+    networks:
+      - odordiff-network
+
+  # Backup Service
+  backup-service:
+    image: postgres:15-alpine
+    container_name: odordiff2-backup
+    restart: "no"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgresql
+      - POSTGRES_DB=odordiff2
+    volumes:
+      - ./backups:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    networks:
+      - odordiff-network
+    depends_on:
+      - postgresql
+    command: >
+      sh -c "
+        while true; do
+          sleep 86400  # 24 hours
+          /usr/local/bin/backup.sh
+        done
+      "
+
+networks:
+  odordiff-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Production Environment Variables Template
+# Create a .env file with these variables:
+#
+# POSTGRES_USER=odordiff_user
+# POSTGRES_PASSWORD=secure_database_password
+# DATABASE_URL=postgresql://odordiff_user:secure_database_password@postgresql:5432/odordiff2
+# REDIS_URL=redis://redis:6379/0
+# SECRET_KEY=your_secret_key_here_minimum_32_characters_long
+# GRAFANA_PASSWORD=secure_grafana_admin_password
+#
+# SSL Configuration (if using HTTPS):
+# SSL_CERT_PATH=/etc/ssl/certs/odordiff2.crt
+# SSL_KEY_PATH=/etc/ssl/private/odordiff2.key
+
+# Deployment Commands:
+#
+# 1. Initial deployment:
+#    docker-compose -f deployment/production-deployment-complete.yml up -d
+#
+# 2. Scale API services:
+#    docker-compose -f deployment/production-deployment-complete.yml up -d --scale odordiff2-api=5
+#
+# 3. Update application:
+#    docker-compose -f deployment/production-deployment-complete.yml pull
+#    docker-compose -f deployment/production-deployment-complete.yml up -d --no-deps odordiff2-api
+#
+# 4. View logs:
+#    docker-compose -f deployment/production-deployment-complete.yml logs -f odordiff2-api
+#
+# 5. Backup database:
+#    docker-compose -f deployment/production-deployment-complete.yml exec postgresql pg_dump -U odordiff_user odordiff2 > backup.sql
+#
+# 6. Health check:
+#    curl -f http://localhost/health
+#
+# 7. Stop services:
+#    docker-compose -f deployment/production-deployment-complete.yml down
+#
+# 8. Complete cleanup (WARNING: removes data):
+#    docker-compose -f deployment/production-deployment-complete.yml down -v --remove-orphans
