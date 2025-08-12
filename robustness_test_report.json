@@ -1,226 +1,46 @@
 {
-  "timestamp": 1754722870.3554277,
-  "total_tests": 33,
-  "total_passed": 0,
-  "success_rate": 0.0,
-  "categories": {
-    "health_monitoring": [
-      {
-        "name": "Health imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3290691
-      },
-      {
-        "name": "Health checker",
-        "passed": false,
-        "message": "Health check failed: No module named 'torch'",
-        "timestamp": 1754722870.3301191
-      },
-      {
-        "name": "Health endpoints",
-        "passed": false,
-        "message": "Health endpoint failed: No module named 'torch'",
-        "timestamp": 1754722870.331507
-      }
-    ],
-    "circuit_breakers": [
-      {
-        "name": "Circuit breaker imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.332654
-      },
-      {
-        "name": "Circuit breaker function",
-        "passed": false,
-        "message": "Circuit breaker test failed: No module named 'torch'",
-        "timestamp": 1754722870.334234
-      },
-      {
-        "name": "Circuit breaker failures",
-        "passed": false,
-        "message": "Failure test failed: No module named 'torch'",
-        "timestamp": 1754722870.3349116
-      }
-    ],
-    "rate_limiting": [
-      {
-        "name": "Rate limiter imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3356779
-      },
-      {
-        "name": "Rate limit function",
-        "passed": false,
-        "message": "Rate limiting test failed: No module named 'torch'",
-        "timestamp": 1754722870.3364384
-      },
-      {
-        "name": "IP rate limiting",
-        "passed": false,
-        "message": "IP rate limiting test failed: No module named 'torch'",
-        "timestamp": 1754722870.337165
-      }
-    ],
-    "input_validation": [
-      {
-        "name": "Validation imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.337857
-      },
-      {
-        "name": "Text sanitization",
-        "passed": false,
-        "message": "Sanitization test failed: No module named 'torch'",
-        "timestamp": 1754722870.3385763
-      },
-      {
-        "name": "JSON schema validation",
-        "passed": false,
-        "message": "Schema validation failed: No module named 'torch'",
-        "timestamp": 1754722870.33926
-      },
-      {
-        "name": "Prompt validation",
-        "passed": false,
-        "message": "Prompt validation failed: No module named 'torch'",
-        "timestamp": 1754722870.3401659
-      }
-    ],
-    "error_recovery": [
-      {
-        "name": "Recovery imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3408988
-      },
-      {
-        "name": "Retry mechanisms",
-        "passed": false,
-        "message": "Retry test failed: No module named 'torch'",
-        "timestamp": 1754722870.3416126
-      },
-      {
-        "name": "Graceful degradation",
-        "passed": false,
-        "message": "Degradation test failed: No module named 'torch'",
-        "timestamp": 1754722870.3422976
-      }
-    ],
-    "configuration_management": [
-      {
-        "name": "Config imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3431034
-      },
-      {
-        "name": "Environment config",
-        "passed": false,
-        "message": "Config loading failed: No module named 'torch'",
-        "timestamp": 1754722870.3441799
-      },
-      {
-        "name": "Config validation",
-        "passed": false,
-        "message": "Config validation test failed: No module named 'torch'",
-        "timestamp": 1754722870.344945
-      }
-    ],
-    "connection_pooling": [
-      {
-        "name": "Connection pool imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3457482
-      },
-      {
-        "name": "SQLite connection pool",
-        "passed": false,
-        "message": "Connection pool test failed: No module named 'torch'",
-        "timestamp": 1754722870.3465042
-      },
-      {
-        "name": "Enhanced cache",
-        "passed": false,
-        "message": "Enhanced cache test failed: No module named 'torch'",
-        "timestamp": 1754722870.3472056
-      }
-    ],
-    "backup_recovery": [
-      {
-        "name": "Backup imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3478868
-      },
-      {
-        "name": "Local backup",
-        "passed": false,
-        "message": "Backup test failed: No module named 'torch'",
-        "timestamp": 1754722870.3486705
-      },
-      {
-        "name": "Backup restoration",
-        "passed": false,
-        "message": "Restoration test failed: No module named 'torch'",
-        "timestamp": 1754722870.3493576
-      }
-    ],
-    "security_hardening": [
-      {
-        "name": "Security imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.3500738
-      },
-      {
-        "name": "Request signing",
-        "passed": false,
-        "message": "Request signing test failed: No module named 'torch'",
-        "timestamp": 1754722870.350751
-      },
-      {
-        "name": "JWT management",
-        "passed": false,
-        "message": "JWT test failed: No module named 'torch'",
-        "timestamp": 1754722870.3514574
-      },
-      {
-        "name": "Security headers",
-        "passed": false,
-        "message": "Security headers test failed: No module named 'torch'",
-        "timestamp": 1754722870.3522193
-      }
-    ],
-    "observability": [
-      {
-        "name": "Observability imports",
-        "passed": false,
-        "message": "Import failed: No module named 'torch'",
-        "timestamp": 1754722870.353
-      },
-      {
-        "name": "Structured logging",
-        "passed": false,
-        "message": "Structured logging test failed: No module named 'torch'",
-        "timestamp": 1754722870.3537831
-      },
-      {
-        "name": "Distributed tracing",
-        "passed": false,
-        "message": "Tracing test failed: No module named 'torch'",
-        "timestamp": 1754722870.3545527
-      },
-      {
-        "name": "Correlation context",
-        "passed": false,
-        "message": "Correlation context test failed: No module named 'torch'",
-        "timestamp": 1754722870.35525
-      }
-    ]
-  }
+  "timestamp": 1755006313.3945045,
+  "overall_status": "FAIL",
+  "summary": {
+    "total_tests": 7,
+    "passed": 0,
+    "failed": 7,
+    "skipped": 0,
+    "success_rate": "0.0%"
+  },
+  "test_results": {
+    "error_handling": {
+      "status": "FAIL",
+      "error": "No module named 'torch'"
+    },
+    "input_validation": {
+      "status": "FAIL",
+      "error": "No module named 'torch'"
+    },
+    "health_monitoring": {
+      "status": "FAIL",
+      "error": "No module named 'torch'"
+    },
+    "rate_limiting": {
+      "status": "FAIL",
+      "error": "No module named 'torch'"
+    },
+    "authentication": {
+      "status": "FAIL",
+      "error": "No module named 'torch'"
+    },
+    "security_measures": {
+      "status": "FAIL",
+      "error": "No module named 'torch'"
+    },
+    "pytest_tests": {
+      "status": "FAIL",
+      "stdout": "",
+      "stderr": "/usr/bin/python3: No module named pytest\n",
+      "returncode": 1
+    }
+  },
+  "recommendations": [
+    "Address failed tests before deployment"
+  ]
 }

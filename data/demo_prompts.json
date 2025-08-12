@@ -1,0 +1,24 @@
+{
+  "prompts": [
+    "Fresh morning dew on rose petals",
+    "Warm sandalwood with vanilla undertones",
+    "Bright citrus bergamot with lemon zest",
+    "Exotic spice blend with cardamom and cinnamon",
+    "Clean ocean breeze with salt crystals",
+    "Sweet honey with floral jasmine notes",
+    "Earthy patchouli with amber warmth", 
+    "Green apple with fresh mint leaves",
+    "Smoky leather with tobacco hints",
+    "Powdery iris with soft musk base"
+  ],
+  "description": "Sample prompts for OdorDiff-2 demonstration",
+  "usage": "Use these prompts to test molecule generation",
+  "categories": {
+    "floral": ["Fresh morning dew on rose petals", "Sweet honey with floral jasmine notes", "Powdery iris with soft musk base"],
+    "woody": ["Warm sandalwood with vanilla undertones", "Earthy patchouli with amber warmth"],
+    "citrus": ["Bright citrus bergamot with lemon zest"],
+    "spicy": ["Exotic spice blend with cardamom and cinnamon"],
+    "fresh": ["Clean ocean breeze with salt crystals", "Green apple with fresh mint leaves"],
+    "leather": ["Smoky leather with tobacco hints"]
+  }
+}

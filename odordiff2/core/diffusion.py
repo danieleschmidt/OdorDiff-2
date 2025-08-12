@@ -5,13 +5,20 @@ Core diffusion model for text-to-molecule generation.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 import numpy as np
 from transformers import AutoTokenizer, AutoModel
 import random
+import os
+import json
+from pathlib import Path
+from tqdm import tqdm
+import logging
 
 from ..models.molecule import Molecule, OdorProfile
 from ..safety.filter import SafetyFilter
+
+logger = logging.getLogger(__name__)
 
 
 class TextEncoder(nn.Module):
