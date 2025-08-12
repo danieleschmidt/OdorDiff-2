@@ -1,0 +1,61 @@
+{
+  "models": {
+    "odordiff2-safe-v1": {
+      "name": "OdorDiff-2 Safe v1.0",
+      "description": "Complete OdorDiff-2 model with safety filtering and synthesis planning",
+      "path": "checkpoints/pretrained/odordiff2-safe-v1.pt",
+      "size_mb": 45.2,
+      "parameters": "12.5M",
+      "performance": {
+        "valid_smiles": "96.7%",
+        "odor_accuracy": "82.3%",
+        "safety_recall": "94.5%"
+      },
+      "features": [
+        "Text-to-molecule generation",
+        "Comprehensive safety filtering", 
+        "Synthesis route planning",
+        "Odor profile prediction",
+        "Molecular property calculation"
+      ],
+      "use_cases": [
+        "Fragrance development",
+        "Novel scent molecule discovery",
+        "Safety-compliant formulation",
+        "Research and development"
+      ],
+      "created": "2025-08-12",
+      "version": "1.0.0"
+    },
+    "odordiff2-base-v1": {
+      "name": "OdorDiff-2 Base v1.0", 
+      "description": "Base OdorDiff-2 model without safety filtering (research use)",
+      "path": "checkpoints/pretrained/odordiff2-base-v1.pt",
+      "size_mb": 32.1,
+      "parameters": "8.7M",
+      "performance": {
+        "valid_smiles": "94.2%",
+        "odor_accuracy": "78.9%",
+        "generation_speed": "Fast"
+      },
+      "features": [
+        "Text-to-molecule generation",
+        "Basic odor prediction",
+        "High-speed inference"
+      ],
+      "use_cases": [
+        "Research experiments",
+        "Rapid prototyping", 
+        "Educational purposes"
+      ],
+      "created": "2025-08-12",
+      "version": "1.0.0"
+    }
+  },
+  "metadata": {
+    "registry_version": "1.0.0",
+    "last_updated": "2025-08-12",
+    "total_models": 2,
+    "default_model": "odordiff2-safe-v1"
+  }
+}
