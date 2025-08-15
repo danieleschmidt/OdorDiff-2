@@ -3,7 +3,7 @@ Interactive dashboard for OdorDiff-2 molecule generation and analysis.
 """
 
 import dash
-from dash import dcc, html, Input, Output, State, callback_table
+from dash import dcc, html, Input, Output, State, callback
 import plotly.graph_objs as go
 import plotly.express as px
 import pandas as pd
