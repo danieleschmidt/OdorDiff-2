@@ -4,8 +4,18 @@ Safety filtering system for generated molecules.
 
 from typing import List, Dict, Any, Optional, Tuple
 import numpy as np
-from rdkit import Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors
+
+# Optional RDKit import with fallback
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors, rdMolDescriptors
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
+    Chem = None
+    Descriptors = None
+    rdMolDescriptors = None
+
 from ..models.molecule import Molecule, SafetyReport
 
 
@@ -106,6 +116,9 @@ class SafetyFilter:
     
     def _assess_toxicity(self, molecule: Molecule) -> float:
         """Assess toxicity risk using structure-based rules."""
+        if not RDKIT_AVAILABLE:
+            return self._simple_toxicity_assessment(molecule)
+            
         mol = molecule.mol
         if not mol:
             return 1.0
@@ -137,8 +150,34 @@ class SafetyFilter:
             
         return min(toxicity_score, 1.0)
     
+    def _simple_toxicity_assessment(self, molecule: Molecule) -> float:
+        """Simple toxicity assessment without RDKit."""
+        if not molecule.smiles:
+            return 1.0
+            
+        toxicity_score = 0.0
+        smiles = molecule.smiles.upper()
+        
+        # Check for obviously toxic elements/groups
+        toxic_indicators = ['AS', 'HG', 'PB', 'CD', 'BE', 'CL4', 'BR2']
+        for indicator in toxic_indicators:
+            if indicator in smiles:
+                toxicity_score += 0.4
+        
+        # Check molecular weight
+        mw = molecule.get_property('molecular_weight') or 0
+        if mw > 500:
+            toxicity_score += 0.1
+        if mw > 1000:
+            toxicity_score += 0.3
+            
+        return min(toxicity_score, 1.0)
+    
     def _check_skin_sensitization(self, molecule: Molecule) -> bool:
         """Check for skin sensitization potential."""
+        if not RDKIT_AVAILABLE:
+            return self._simple_sensitization_check(molecule)
+            
         mol = molecule.mol
         if not mol:
             return True
@@ -162,8 +201,26 @@ class SafetyFilter:
                 
         return False
     
+    def _simple_sensitization_check(self, molecule: Molecule) -> bool:
+        """Simple sensitization check without RDKit."""
+        if not molecule.smiles:
+            return True
+            
+        smiles = molecule.smiles.lower()
+        
+        # Check for common allergenic indicators
+        allergenic_patterns = ['=o', 'c=o', 'cccc', 'ccccc']  # Basic patterns
+        for pattern in allergenic_patterns:
+            if smiles.count(pattern) > 2:
+                return True
+                
+        return False
+    
     def _assess_environmental_impact(self, molecule: Molecule) -> float:
         """Assess environmental impact/biodegradability."""
+        if not RDKIT_AVAILABLE:
+            return self._simple_environmental_assessment(molecule)
+            
         mol = molecule.mol
         if not mol:
             return 1.0
@@ -194,8 +251,33 @@ class SafetyFilter:
             
         return min(eco_score, 1.0)
     
+    def _simple_environmental_assessment(self, molecule: Molecule) -> float:
+        """Simple environmental assessment without RDKit."""
+        if not molecule.smiles:
+            return 1.0
+            
+        eco_score = 0.0
+        smiles = molecule.smiles.upper()
+        
+        # Check for halogens
+        halogen_count = smiles.count('F') + smiles.count('CL') + smiles.count('BR') + smiles.count('I')
+        if halogen_count > 3:
+            eco_score += 0.4
+        elif halogen_count > 1:
+            eco_score += 0.2
+            
+        # Check molecular weight
+        mw = molecule.get_property('molecular_weight') or 0
+        if mw > 400:
+            eco_score += 0.2
+            
+        return min(eco_score, 1.0)
+    
     def _check_ifra_compliance(self, molecule: Molecule) -> bool:
         """Check compliance with IFRA standards."""
+        if not RDKIT_AVAILABLE:
+            return self._simple_ifra_check(molecule)
+            
         mol = molecule.mol
         if not mol:
             return False
@@ -216,12 +298,35 @@ class SafetyFilter:
             
         return True
     
+    def _simple_ifra_check(self, molecule: Molecule) -> bool:
+        """Simple IFRA compliance check without RDKit."""
+        if not molecule.smiles:
+            return False
+            
+        # Basic molecular weight check
+        mw = molecule.get_property('molecular_weight') or 0
+        if mw > 1000:
+            return False
+            
+        # Check for obviously banned patterns in SMILES
+        smiles = molecule.smiles.upper()
+        banned_indicators = ['BR.*BR', 'CL4', 'CCL4']
+        for indicator in banned_indicators:
+            if indicator in smiles:
+                return False
+                
+        return True
+    
     def _check_regulatory_compliance(self, molecule: Molecule) -> List[Dict[str, str]]:
         """Check compliance with various regulatory frameworks."""
         flags = []
-        mol = molecule.mol
         
-        if not mol:
+        if not RDKIT_AVAILABLE:
+            mol = None
+        else:
+            mol = molecule.mol
+        
+        if not molecule.is_valid:
             flags.append({"region": "ALL", "status": "INVALID_STRUCTURE"})
             return flags
             
