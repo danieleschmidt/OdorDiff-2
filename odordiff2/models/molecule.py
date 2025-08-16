@@ -5,8 +5,17 @@ Molecule data structures and representations.
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
-from rdkit import Chem
-from rdkit.Chem import Descriptors, rdMolDescriptors
+
+# Optional RDKit import with fallback
+try:
+    from rdkit import Chem
+    from rdkit.Chem import Descriptors, rdMolDescriptors
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
+    Chem = None
+    Descriptors = None
+    rdMolDescriptors = None
 
 
 @dataclass
@@ -59,8 +68,10 @@ class Molecule:
         self.estimated_cost = 0.0
         
     @property
-    def mol(self) -> Optional[Chem.Mol]:
+    def mol(self):
         """Get RDKit molecule object."""
+        if not RDKIT_AVAILABLE:
+            return None
         if self._mol is None and self.smiles:
             self._mol = Chem.MolFromSmiles(self.smiles)
         return self._mol
@@ -68,17 +79,31 @@ class Molecule:
     @property
     def is_valid(self) -> bool:
         """Check if molecule is chemically valid."""
+        if not RDKIT_AVAILABLE:
+            # Basic SMILES validation without RDKit
+            return self._basic_smiles_validation()
         return self.mol is not None
+    
+    def _basic_smiles_validation(self) -> bool:
+        """Basic SMILES validation without RDKit."""
+        if not self.smiles or len(self.smiles) < 2:
+            return False
+        # Check for basic chemistry characters
+        valid_chars = set('CNOSPFClBrI()[]=#-+1234567890@Hncos')
+        return all(c in valid_chars for c in self.smiles)
     
     def get_property(self, name: str) -> Optional[float]:
         """Get cached molecular property."""
-        if name not in self._properties and self.mol:
-            self._compute_properties()
+        if name not in self._properties:
+            if RDKIT_AVAILABLE and self.mol:
+                self._compute_properties()
+            else:
+                self._estimate_properties()
         return self._properties.get(name)
     
     def _compute_properties(self):
-        """Compute and cache molecular properties."""
-        if not self.mol:
+        """Compute and cache molecular properties using RDKit."""
+        if not RDKIT_AVAILABLE or not self.mol:
             return
             
         self._properties.update({
@@ -91,68 +116,103 @@ class Molecule:
             'aromatic_rings': Descriptors.NumAromaticRings(self.mol)
         })
     
+    def _estimate_properties(self):
+        """Estimate properties without RDKit (simplified)."""
+        if not self.smiles:
+            return
+            
+        # Very basic property estimation from SMILES string
+        carbon_count = self.smiles.count('C') + self.smiles.count('c')
+        oxygen_count = self.smiles.count('O') + self.smiles.count('o')
+        nitrogen_count = self.smiles.count('N') + self.smiles.count('n')
+        aromatic_count = self.smiles.count('c')
+        
+        # Rough molecular weight estimation
+        estimated_mw = carbon_count * 12 + oxygen_count * 16 + nitrogen_count * 14 + 50
+        
+        self._properties.update({
+            'molecular_weight': estimated_mw,
+            'logP': min(5.0, carbon_count * 0.3 - oxygen_count * 0.5),
+            'tpsa': oxygen_count * 20 + nitrogen_count * 15,
+            'hbd': min(5, oxygen_count // 2 + nitrogen_count // 3),
+            'hba': oxygen_count + nitrogen_count,
+            'rotatable_bonds': max(0, carbon_count - aromatic_count - 2),
+            'aromatic_rings': max(0, aromatic_count // 6)
+        })
+    
     def get_molecular_fingerprint(self) -> Optional[np.ndarray]:
         """Get Morgan fingerprint for similarity calculations."""
-        if not self.mol:
-            return None
-        from rdkit.Chem import rdMolDescriptors
+        if not RDKIT_AVAILABLE or not self.mol:
+            return self._simple_fingerprint()
+        
         fp = rdMolDescriptors.GetMorganFingerprintAsBitVect(self.mol, 2, nBits=2048)
         return np.array(fp)
     
+    def _simple_fingerprint(self) -> Optional[np.ndarray]:
+        """Simple fingerprint based on SMILES string."""
+        if not self.smiles:
+            return None
+        # Create a basic fingerprint from character counts
+        features = np.zeros(64)
+        features[0] = len(self.smiles) % 64
+        features[1] = self.smiles.count('C') % 64
+        features[2] = self.smiles.count('c') % 64
+        features[3] = self.smiles.count('O') % 64
+        features[4] = self.smiles.count('N') % 64
+        features[5] = self.smiles.count('=') % 64
+        return features
+    
     def calculate_similarity(self, other: 'Molecule') -> float:
-        """Calculate Tanimoto similarity to another molecule."""
+        """Calculate similarity to another molecule."""
         fp1 = self.get_molecular_fingerprint()
         fp2 = other.get_molecular_fingerprint()
         
         if fp1 is None or fp2 is None:
             return 0.0
-            
-        from rdkit import DataStructs
-        return DataStructs.TanimotoSimilarity(fp1, fp2)
+        
+        if RDKIT_AVAILABLE:
+            from rdkit import DataStructs
+            return DataStructs.TanimotoSimilarity(fp1, fp2)
+        else:
+            # Simple cosine similarity for basic fingerprints
+            dot_product = np.dot(fp1, fp2)
+            norm1 = np.linalg.norm(fp1)
+            norm2 = np.linalg.norm(fp2)
+            return dot_product / (norm1 * norm2 + 1e-10)
     
     def visualize_3d(self, save_path: str = "molecule.html"):
         """Generate 3D visualization HTML."""
-        if not self.mol:
+        if not self.is_valid:
             raise ValueError("Invalid molecule for visualization")
             
-        # Basic 3D visualization using py3Dmol
-        try:
-            import py3Dmol
-            from rdkit.Chem import rdDepictor
-            from rdkit.Chem.rdDepictor import Compute2DCoords
-            
-            # Generate 2D coordinates as fallback
-            Compute2DCoords(self.mol)
-            
-            # Create simple HTML visualization
-            html_content = f"""
-            <html>
-            <head><title>Molecule Visualization</title></head>
-            <body>
-                <h2>Molecule: {self.smiles}</h2>
-                <div id="viewer" style="width:600px;height:400px;"></div>
-                <script src="https://3dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
-                <script>
-                let viewer = $3Dmol.createViewer("viewer");
-                viewer.addModel("{self.smiles}", "smi");
-                viewer.setStyle({{}}, {{stick:{{}}}});
-                viewer.zoomTo();
-                viewer.render();
-                </script>
+        # Create simple HTML visualization
+        html_content = f"""
+        <html>
+        <head><title>Molecule Visualization</title></head>
+        <body>
+            <h2>Molecule: {self.smiles}</h2>
+            <div id="viewer" style="width:600px;height:400px;border:1px solid #ccc;"></div>
+            <script src="https://3dmol.csb.pitt.edu/build/3Dmol-min.js"></script>
+            <script>
+            let viewer = $3Dmol.createViewer("viewer");
+            viewer.addModel("{self.smiles}", "smi");
+            viewer.setStyle({{}}, {{stick:{{}}}});
+            viewer.zoomTo();
+            viewer.render();
+            </script>
+            <div style="margin-top: 20px;">
                 <p><strong>Odor Profile:</strong> {self.odor_profile}</p>
                 <p><strong>Safety Score:</strong> {self.safety_score:.2f}</p>
                 <p><strong>Synthesis Score:</strong> {self.synth_score:.2f}</p>
-            </body>
-            </html>
-            """
-            
-            with open(save_path, 'w') as f:
-                f.write(html_content)
-                
-        except ImportError:
-            # Fallback to simple text representation
-            with open(save_path, 'w') as f:
-                f.write(f"Molecule: {self.smiles}\nOdor: {self.odor_profile}")
+                <p><strong>Molecular Weight:</strong> {self.get_property('molecular_weight') or 'N/A'}</p>
+                <p><strong>LogP:</strong> {self.get_property('logP') or 'N/A'}</p>
+            </div>
+        </body>
+        </html>
+        """
+        
+        with open(save_path, 'w') as f:
+            f.write(html_content)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert molecule to dictionary representation."""
