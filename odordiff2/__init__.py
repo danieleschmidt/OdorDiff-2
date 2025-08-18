@@ -5,11 +5,36 @@ A state-of-the-art AI system for generating novel scent molecules from text desc
 with integrated safety filters and synthesizability scoring.
 """
 
-from .core.diffusion import OdorDiffusion
-from .safety.filter import SafetyFilter
-from .models.molecule import Molecule, OdorProfile
-from .core.synthesis import SynthesisPlanner
-from .visualization.viewer import MoleculeViewer
+# Core imports with error handling for optional dependencies
+try:
+    from .core.diffusion import OdorDiffusion
+except ImportError as e:
+    print(f"Warning: Could not import OdorDiffusion: {e}")
+    OdorDiffusion = None
+
+try:
+    from .safety.filter import SafetyFilter
+except ImportError as e:
+    print(f"Warning: Could not import SafetyFilter: {e}")
+    SafetyFilter = None
+
+try:
+    from .models.molecule import Molecule, OdorProfile
+except ImportError as e:
+    print(f"Warning: Could not import Molecule/OdorProfile: {e}")
+    Molecule = OdorProfile = None
+
+try:
+    from .core.synthesis import SynthesisPlanner
+except ImportError as e:
+    print(f"Warning: Could not import SynthesisPlanner (likely missing RDKit): {e}")
+    SynthesisPlanner = None
+
+try:
+    from .visualization.viewer import MoleculeViewer
+except ImportError as e:
+    print(f"Warning: Could not import MoleculeViewer: {e}")
+    MoleculeViewer = None
 
 __version__ = "1.0.0"
 __author__ = "Daniel Schmidt"
