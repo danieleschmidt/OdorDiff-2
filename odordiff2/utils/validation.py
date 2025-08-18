@@ -18,7 +18,13 @@ except ImportError:
     JSONSCHEMA_AVAILABLE = False
     JSONSchemaError = Exception
 
-from rdkit import Chem
+try:
+    from rdkit import Chem
+    RDKIT_AVAILABLE = True
+except ImportError:
+    RDKIT_AVAILABLE = False
+    Chem = None
+
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -484,21 +490,26 @@ class InputValidator:
             invalid_chars = set(smiles) - allowed_chars
             raise ValidationError(f"SMILES contains invalid characters: {invalid_chars}")
             
-        # Validate with RDKit
-        try:
-            mol = Chem.MolFromSmiles(smiles)
-            if mol is None:
-                if strict:
-                    raise ValidationError(f"Invalid SMILES: {smiles}")
-                return smiles
+        # Validate with RDKit if available
+        if RDKIT_AVAILABLE and Chem is not None:
+            try:
+                mol = Chem.MolFromSmiles(smiles)
+                if mol is None:
+                    if strict:
+                        raise ValidationError(f"Invalid SMILES: {smiles}")
+                    return smiles
+                    
+                # Return canonical SMILES
+                canonical = Chem.MolToSmiles(mol)
+                return canonical
                 
-            # Return canonical SMILES
-            canonical = Chem.MolToSmiles(mol)
-            return canonical
-            
-        except Exception as e:
-            if strict:
-                raise ValidationError(f"SMILES validation failed: {str(e)}")
+            except Exception as e:
+                if strict:
+                    raise ValidationError(f"SMILES validation failed: {str(e)}")
+                return smiles
+        else:
+            # Basic validation without RDKit
+            logger.warning("RDKit not available - performing basic SMILES validation only")
             return smiles
     
     @staticmethod
