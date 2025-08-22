@@ -10,9 +10,16 @@ with infrastructure, monitoring, and enterprise-grade operational capabilities.
 import sys
 import os
 import json
-import yaml
 from pathlib import Path
 from typing import Dict, Any, List
+
+# Handle yaml import gracefully
+try:
+    import yaml
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
+    yaml = None
 
 # Add the current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
