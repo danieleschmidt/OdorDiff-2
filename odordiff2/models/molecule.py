@@ -4,7 +4,26 @@ Molecule data structures and representations.
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
-import numpy as np
+
+# Fallback for numpy if not available
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except ImportError:
+    NUMPY_AVAILABLE = False
+    
+    # Minimal numpy-like functionality
+    class MockLinalg:
+        def norm(self, x): return (sum(i**2 for i in x))**0.5
+    
+    class MockNumpy:
+        def __init__(self):
+            self.linalg = MockLinalg()
+        def zeros(self, size): return [0.0] * size
+        def array(self, data): return data
+        def dot(self, a, b): return sum(x*y for x,y in zip(a,b))
+    
+    np = MockNumpy()
 
 # Optional RDKit import with fallback
 try:
@@ -140,20 +159,23 @@ class Molecule:
             'aromatic_rings': max(0, aromatic_count // 6)
         })
     
-    def get_molecular_fingerprint(self) -> Optional[np.ndarray]:
+    def get_molecular_fingerprint(self) -> Optional[List[float]]:
         """Get Morgan fingerprint for similarity calculations."""
         if not RDKIT_AVAILABLE or not self.mol:
             return self._simple_fingerprint()
         
-        fp = rdMolDescriptors.GetMorganFingerprintAsBitVect(self.mol, 2, nBits=2048)
-        return np.array(fp)
+        if NUMPY_AVAILABLE:
+            fp = rdMolDescriptors.GetMorganFingerprintAsBitVect(self.mol, 2, nBits=2048)
+            return np.array(fp)
+        else:
+            return self._simple_fingerprint()
     
-    def _simple_fingerprint(self) -> Optional[np.ndarray]:
+    def _simple_fingerprint(self) -> Optional[List[float]]:
         """Simple fingerprint based on SMILES string."""
         if not self.smiles:
             return None
         # Create a basic fingerprint from character counts
-        features = np.zeros(64)
+        features = [0.0] * 64
         features[0] = len(self.smiles) % 64
         features[1] = self.smiles.count('C') % 64
         features[2] = self.smiles.count('c') % 64
@@ -170,14 +192,14 @@ class Molecule:
         if fp1 is None or fp2 is None:
             return 0.0
         
-        if RDKIT_AVAILABLE:
+        if RDKIT_AVAILABLE and NUMPY_AVAILABLE:
             from rdkit import DataStructs
             return DataStructs.TanimotoSimilarity(fp1, fp2)
         else:
             # Simple cosine similarity for basic fingerprints
-            dot_product = np.dot(fp1, fp2)
-            norm1 = np.linalg.norm(fp1)
-            norm2 = np.linalg.norm(fp2)
+            dot_product = sum(a * b for a, b in zip(fp1, fp2))
+            norm1 = (sum(x**2 for x in fp1))**0.5
+            norm2 = (sum(x**2 for x in fp2))**0.5
             return dot_product / (norm1 * norm2 + 1e-10)
     
     def visualize_3d(self, save_path: str = "molecule.html"):
