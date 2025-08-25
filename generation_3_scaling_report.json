@@ -1,9 +1,9 @@
 {
   "generation": 3,
   "phase": "MAKE_IT_SCALE",
-  "timestamp": 1755867378.7280478,
+  "timestamp": 1756157748.2081547,
   "performance_score": 70.0,
-  "avg_response_time": 0.0012128493365119485,
+  "avg_response_time": 0.0011919526492848115,
   "cache_hit_rate": 0.17647058823529413,
   "verdict": "NEEDS_WORK",
   "scaling_features_implemented": [
@@ -21,20 +21,20 @@
   "test_results": {
     "single": {
       "molecules": 2,
-      "response_time": 0.0008966922760009766
+      "response_time": 0.0008633136749267578
     },
     "batch": {
       "total_requests": 5,
       "successful": 5,
-      "batch_time": 0.04389691352844238
+      "batch_time": 0.04257488250732422
     },
     "cache": {
       "hit_rate": 0.42857142857142855,
-      "speedup": 5.454192922927775
+      "speedup": 2.842696629213483
     },
     "concurrent": {
       "concurrent_requests": 10,
-      "throughput": 984.6246302643317
+      "throughput": 937.3793719968712
     },
     "scaling": {
       "decisions": [
@@ -50,7 +50,7 @@
       "total_requests": 17,
       "cache_hits": 3,
       "cache_misses": 14,
-      "avg_response_time": 0.0012128493365119485,
+      "avg_response_time": 0.0011919526492848115,
       "requests_per_second": 0.0,
       "error_rate": 0.0
     },
@@ -87,7 +87,7 @@
       "total_scaling_decisions": 4,
       "recent_decisions": [
         {
-          "timestamp": 1755867378.7279284,
+          "timestamp": 1756157748.2080333,
           "decision": "scale_up",
           "instances": 2,
           "metrics": {
@@ -97,7 +97,7 @@
           }
         },
         {
-          "timestamp": 1755867378.7279482,
+          "timestamp": 1756157748.2080538,
           "decision": "maintain",
           "instances": 2,
           "metrics": {
@@ -107,7 +107,7 @@
           }
         },
         {
-          "timestamp": 1755867378.727958,
+          "timestamp": 1756157748.2080638,
           "decision": "scale_up",
           "instances": 3,
           "metrics": {
@@ -117,12 +117,12 @@
           }
         },
         {
-          "timestamp": 1755867378.7279892,
+          "timestamp": 1756157748.208096,
           "decision": "maintain",
           "instances": 3,
           "metrics": {
             "cpu_usage": 45.0,
-            "avg_response_time": 0.0012128493365119485,
+            "avg_response_time": 0.0011919526492848115,
             "queue_length": 0
           }
         }

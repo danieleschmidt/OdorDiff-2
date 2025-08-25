@@ -22,6 +22,9 @@ class CircuitState(Enum):
     OPEN = "open"          # Circuit is open, requests fail fast
     HALF_OPEN = "half_open"  # Testing if service has recovered
 
+# Backwards compatibility alias
+CircuitBreakerState = CircuitState
+
 
 @dataclass
 class CircuitBreakerConfig:

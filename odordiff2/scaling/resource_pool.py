@@ -234,14 +234,22 @@ class ResourcePool:
         self,
         pool_name: str,
         resource_type: ResourceType,
-        config: PoolConfig,
         creator_func: Callable,
+        config: PoolConfig = None,
         destructor_func: Optional[Callable] = None,
-        health_check_func: Optional[Callable] = None
+        health_check_func: Optional[Callable] = None,
+        min_size: int = 1,  # Backwards compatibility
+        max_size: int = 10  # Backwards compatibility
     ):
         self.pool_name = pool_name
         self.resource_type = resource_type
-        self.config = config
+        
+        # Use provided config or create default with backwards compatibility
+        if config is None:
+            self.config = PoolConfig(min_size=min_size, max_size=max_size)
+        else:
+            self.config = config
+            
         self.creator_func = creator_func
         self.destructor_func = destructor_func
         self.health_check_func = health_check_func

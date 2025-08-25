@@ -22,6 +22,19 @@ from ..utils.validation import ValidationError
 logger = get_logger(__name__)
 
 
+def load_environment_config(env: Environment = None) -> Dict[str, Any]:
+    """Load environment-specific configuration."""
+    if env is None:
+        env_name = os.getenv('ODORDIFF_ENV', 'development')
+        env = Environment(env_name)
+    
+    config_file = f"config/{env.value}.yaml"
+    if os.path.exists(config_file):
+        with open(config_file, 'r') as f:
+            return yaml.safe_load(f)
+    return {}
+
+
 class Environment(Enum):
     """Environment types."""
     DEVELOPMENT = "development"
@@ -198,6 +211,18 @@ class ConfigManager:
         self.env_prefix = env_prefix
         self.config: Optional[AppConfig] = None
         self._config_sources: Dict[str, ConfigSource] = {}
+        
+    def get_config(self) -> AppConfig:
+        """Get current configuration."""
+        if self.config is None:
+            self.load_config()
+        return self.config
+        
+    def validate_config(self, config: AppConfig = None) -> bool:
+        """Validate configuration."""
+        if config is None:
+            config = self.get_config()
+        return self._validate_config(config)
         
     def load_config(self, config_file: str = None, environment: str = None) -> AppConfig:
         """
