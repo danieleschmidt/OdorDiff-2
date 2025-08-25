@@ -8,7 +8,7 @@ import asyncio
 from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass, field
 import redis
-import aioredis
+# import aioredis  # Commented out due to TimeoutError conflict
 from redis.sentinel import Sentinel
 from redis.connection import ConnectionPool
 from contextlib import asynccontextmanager

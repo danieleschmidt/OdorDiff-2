@@ -20,6 +20,33 @@ import weakref
 logger = logging.getLogger(__name__)
 
 
+class IntelligentCache:
+    """Simple intelligent cache implementation."""
+    
+    def __init__(self, max_size: int = 1000):
+        self.max_size = max_size
+        self._cache = OrderedDict()
+        
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+        if key in self._cache:
+            value = self._cache.pop(key)  # Remove and re-insert for LRU
+            self._cache[key] = value
+            return value
+        return None
+        
+    def set(self, key: str, value: Any, ttl: Optional[float] = None) -> bool:
+        """Set value in cache."""
+        if len(self._cache) >= self.max_size and key not in self._cache:
+            self._cache.popitem(last=False)  # Remove oldest
+        self._cache[key] = value
+        return True
+        
+    def clear(self):
+        """Clear cache."""
+        self._cache.clear()
+
+
 @dataclass
 class CacheEntry:
     """Cache entry with metadata."""

@@ -1,46 +1,226 @@
 {
-  "timestamp": 1755006313.3945045,
-  "overall_status": "FAIL",
-  "summary": {
-    "total_tests": 7,
-    "passed": 0,
-    "failed": 7,
-    "skipped": 0,
-    "success_rate": "0.0%"
-  },
-  "test_results": {
-    "error_handling": {
-      "status": "FAIL",
-      "error": "No module named 'torch'"
-    },
-    "input_validation": {
-      "status": "FAIL",
-      "error": "No module named 'torch'"
-    },
-    "health_monitoring": {
-      "status": "FAIL",
-      "error": "No module named 'torch'"
-    },
-    "rate_limiting": {
-      "status": "FAIL",
-      "error": "No module named 'torch'"
-    },
-    "authentication": {
-      "status": "FAIL",
-      "error": "No module named 'torch'"
-    },
-    "security_measures": {
-      "status": "FAIL",
-      "error": "No module named 'torch'"
-    },
-    "pytest_tests": {
-      "status": "FAIL",
-      "stdout": "",
-      "stderr": "/usr/bin/python3: No module named pytest\n",
-      "returncode": 1
-    }
-  },
-  "recommendations": [
-    "Address failed tests before deployment"
-  ]
+  "timestamp": 1756157730.03601,
+  "total_tests": 33,
+  "total_passed": 14,
+  "success_rate": 0.42424242424242425,
+  "categories": {
+    "health_monitoring": [
+      {
+        "name": "Health imports",
+        "passed": false,
+        "message": "Import failed: cannot import name 'HealthChecker' from 'odordiff2.monitoring.health' (/root/repo/odordiff2/monitoring/health.py)",
+        "timestamp": 1756157729.8928027
+      },
+      {
+        "name": "Health checker",
+        "passed": false,
+        "message": "Health check failed: cannot import name 'HealthChecker' from 'odordiff2.monitoring.health' (/root/repo/odordiff2/monitoring/health.py)",
+        "timestamp": 1756157729.892851
+      },
+      {
+        "name": "Health endpoints",
+        "passed": false,
+        "message": "Health endpoint failed: 'HealthMonitor' object has no attribute 'get_health_status'",
+        "timestamp": 1756157729.8928704
+      }
+    ],
+    "circuit_breakers": [
+      {
+        "name": "Circuit breaker imports",
+        "passed": true,
+        "message": "Circuit breaker components imported successfully",
+        "timestamp": 1756157729.9001124
+      },
+      {
+        "name": "Circuit breaker function",
+        "passed": false,
+        "message": "Unexpected result: <coroutine object CircuitBreaker.call at 0x7f5fbf7636e0>, state: CircuitState.CLOSED",
+        "timestamp": 1756157729.9006815
+      },
+      {
+        "name": "Circuit breaker failures",
+        "passed": false,
+        "message": "Circuit breaker state: CircuitState.CLOSED",
+        "timestamp": 1756157729.9011126
+      }
+    ],
+    "rate_limiting": [
+      {
+        "name": "Rate limiter imports",
+        "passed": true,
+        "message": "Rate limiting components imported successfully",
+        "timestamp": 1756157729.909685
+      },
+      {
+        "name": "Rate limit function",
+        "passed": false,
+        "message": "Rate limiting test failed: RateLimitBucket.__init__() got an unexpected keyword argument 'window_seconds'",
+        "timestamp": 1756157729.9097545
+      },
+      {
+        "name": "IP rate limiting",
+        "passed": false,
+        "message": "IP rate limiting test failed: a coroutine was expected, got (True, {'allowed': True, 'current_count': 1, 'limit': 100, 'window_seconds': 60, 'reset_time': 1756157729.9101214, 'identifier': '192.168.1.1', 'limit_type': 'ip', 'endpoint': None})",
+        "timestamp": 1756157729.9108121
+      }
+    ],
+    "input_validation": [
+      {
+        "name": "Validation imports",
+        "passed": true,
+        "message": "Validation components imported successfully",
+        "timestamp": 1756157729.910861
+      },
+      {
+        "name": "Text sanitization",
+        "passed": true,
+        "message": "Text sanitized: &lt;script&gt;alert(&#x27;xss&#x27;)&lt;/script&gt",
+        "timestamp": 1756157729.9116871
+      },
+      {
+        "name": "JSON schema validation",
+        "passed": true,
+        "message": "Schema validation working",
+        "timestamp": 1756157729.9162092
+      },
+      {
+        "name": "Prompt validation",
+        "passed": false,
+        "message": "Dangerous prompt not blocked",
+        "timestamp": 1756157729.916326
+      }
+    ],
+    "error_recovery": [
+      {
+        "name": "Recovery imports",
+        "passed": false,
+        "message": "Import failed: cannot import name 'RetryStrategy' from 'odordiff2.utils.recovery' (/root/repo/odordiff2/utils/recovery.py)",
+        "timestamp": 1756157729.9245107
+      },
+      {
+        "name": "Retry mechanisms",
+        "passed": false,
+        "message": "Retry test failed: 'RecoveryManager' object has no attribute 'execute_with_retry'",
+        "timestamp": 1756157729.924578
+      },
+      {
+        "name": "Graceful degradation",
+        "passed": false,
+        "message": "Degradation test failed: 'GracefulDegradation' object has no attribute 'degrade_service'",
+        "timestamp": 1756157729.9245913
+      }
+    ],
+    "configuration_management": [
+      {
+        "name": "Import configuration components",
+        "passed": false,
+        "message": "Exception: name 'Environment' is not defined",
+        "timestamp": 1756157729.9321034
+      },
+      {
+        "name": "Environment config",
+        "passed": false,
+        "message": "Config loading failed: name 'Environment' is not defined",
+        "timestamp": 1756157729.932971
+      },
+      {
+        "name": "Config validation",
+        "passed": false,
+        "message": "Config validation test failed: name 'Environment' is not defined",
+        "timestamp": 1756157729.9334843
+      }
+    ],
+    "connection_pooling": [
+      {
+        "name": "Connection pool imports",
+        "passed": true,
+        "message": "Connection pool components imported successfully",
+        "timestamp": 1756157729.990166
+      },
+      {
+        "name": "SQLite connection pool",
+        "passed": false,
+        "message": "Connection pool test failed: DatabaseConnectionPool.__init__() got an unexpected keyword argument 'max_connections'",
+        "timestamp": 1756157729.9902592
+      },
+      {
+        "name": "Enhanced cache",
+        "passed": false,
+        "message": "Enhanced cache test failed: PersistentCache.__init__() got an unexpected keyword argument 'cache_dir'",
+        "timestamp": 1756157729.9902887
+      }
+    ],
+    "backup_recovery": [
+      {
+        "name": "Backup imports",
+        "passed": true,
+        "message": "Backup components imported successfully",
+        "timestamp": 1756157729.9968195
+      },
+      {
+        "name": "Local backup",
+        "passed": true,
+        "message": "Backup created: test_data_20250825_213529",
+        "timestamp": 1756157730.001833
+      },
+      {
+        "name": "Backup restoration",
+        "passed": true,
+        "message": "Backup restoration successful",
+        "timestamp": 1756157730.0068772
+      }
+    ],
+    "security_hardening": [
+      {
+        "name": "Security imports",
+        "passed": false,
+        "message": "Import failed: cannot import name 'SecurityManager' from 'odordiff2.utils.security' (/root/repo/odordiff2/utils/security.py)",
+        "timestamp": 1756157730.0338924
+      },
+      {
+        "name": "Request signing",
+        "passed": false,
+        "message": "Request signing test failed: RequestSigner.__init__() missing 1 required positional argument: 'secret_key'",
+        "timestamp": 1756157730.0339458
+      },
+      {
+        "name": "JWT management",
+        "passed": false,
+        "message": "JWT test failed: JWTManager.__init__() missing 1 required positional argument: 'secret_key'",
+        "timestamp": 1756157730.0339565
+      },
+      {
+        "name": "Security headers",
+        "passed": true,
+        "message": "Security headers generated: 9 headers",
+        "timestamp": 1756157730.0339715
+      }
+    ],
+    "observability": [
+      {
+        "name": "Observability imports",
+        "passed": true,
+        "message": "Observability components imported successfully",
+        "timestamp": 1756157730.034008
+      },
+      {
+        "name": "Structured logging",
+        "passed": true,
+        "message": "Structured logs created: 1 files",
+        "timestamp": 1756157730.0356843
+      },
+      {
+        "name": "Distributed tracing",
+        "passed": true,
+        "message": "Tracing working: 1 spans",
+        "timestamp": 1756157730.0358405
+      },
+      {
+        "name": "Correlation context",
+        "passed": true,
+        "message": "Correlation context working: test_correlation_id",
+        "timestamp": 1756157730.0358706
+      }
+    ]
+  }
 }

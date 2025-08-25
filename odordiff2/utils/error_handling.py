@@ -17,6 +17,26 @@ from .logging import get_logger
 logger = get_logger(__name__)
 
 
+def handle_errors(func=None, *, exceptions=None, default_return=None, log_errors=True):
+    """Decorator for handling errors in functions."""
+    def decorator(fn):
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as e:
+                if log_errors:
+                    logger.error(f"Error in {fn.__name__}: {e}")
+                if exceptions and isinstance(e, exceptions):
+                    return default_return
+                return default_return
+        return wrapper
+    
+    if func is None:
+        return decorator
+    else:
+        return decorator(func)
+
+
 class ErrorSeverity(Enum):
     """Error severity levels."""
     LOW = "low"

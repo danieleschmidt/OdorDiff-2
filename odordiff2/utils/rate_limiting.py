@@ -50,6 +50,7 @@ class RateLimitBucket:
     last_refill: float = field(default_factory=time.time)
     requests_count: int = 0        # Total requests
     blocked_count: int = 0         # Blocked requests
+    max_requests: Optional[int] = None  # Backwards compatibility
     
     def refill(self):
         """Refill tokens based on elapsed time."""
@@ -234,6 +235,11 @@ class RateLimiter:
     
     def is_allowed(self, identifier: str, limit_type: LimitType, 
                   api_key: str = None, endpoint: str = None) -> Tuple[bool, Dict[str, Any]]:
+        """Check if request is allowed."""
+        return self.check_rate_limit(identifier, limit_type, api_key, endpoint)
+                  
+    def check_rate_limit(self, identifier: str, limit_type: LimitType = LimitType.IP,
+                        api_key: str = None, endpoint: str = None) -> Tuple[bool, Dict[str, Any]]:
         """Check if request is allowed."""
         
         # Check blacklist first
