@@ -1,0 +1,8 @@
+{
+  "system_name": "OdorDiff-2",
+  "welcome_message": "Welcome to OdorDiff-2 - Safe Text-to-Scent Generation",
+  "generating_molecules": "Generating molecules...",
+  "molecules_generated": "molecules generated successfully",
+  "safety_check": "Running safety checks...",
+  "processing_complete": "Processing complete"
+}

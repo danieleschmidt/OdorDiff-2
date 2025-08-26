@@ -1,0 +1,8 @@
+{
+  "system_name": "OdorDiff-2",
+  "welcome_message": "Bienvenue à OdorDiff-2 - Génération Sûre de Parfums depuis Texte",
+  "generating_molecules": "Génération de molécules...",
+  "molecules_generated": "molécules générées avec succès",
+  "safety_check": "Vérifications de sécurité en cours...",
+  "processing_complete": "Traitement terminé"
+}

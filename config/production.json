@@ -1,0 +1,11 @@
+{
+  "environment": "production",
+  "debug": false,
+  "api": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "logging": {
+    "level": "INFO"
+  }
+}

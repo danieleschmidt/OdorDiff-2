@@ -1,11 +1,13 @@
 """
-Fallback validation system for environments without full dependencies.
+Comprehensive validation system for OdorDiff-2.
 """
 
-from typing import List, Dict, Any, Tuple, Optional
-from dataclasses import dataclass
 import re
+import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ValidationResult:
@@ -13,200 +15,140 @@ class ValidationResult:
     is_valid: bool
     errors: List[str]
     warnings: List[str]
-    confidence: float = 1.0
     
-    def __bool__(self) -> bool:
-        return self.is_valid
+    @property
+    def has_errors(self) -> bool:
+        return len(self.errors) > 0
+    
+    @property
+    def has_warnings(self) -> bool:
+        return len(self.warnings) > 0
 
-
-class FallbackValidator:
-    """Lightweight validation without external dependencies."""
+class ComprehensiveValidator:
+    """Comprehensive validation for all system inputs and outputs."""
     
     def __init__(self):
-        # Common SMILES patterns
-        self.valid_atoms = set([
-            'C', 'c', 'N', 'n', 'O', 'o', 'S', 's', 'P', 'F', 'Cl', 'Br', 'I',
-            'B', 'Si', 'Se', 'As', 'Mg', 'Ca', 'Na', 'K', 'H'
-        ])
+        self.smiles_pattern = re.compile(r'^[A-Za-z0-9@+\-\[\]\(\)=#:]+$')
         
-        self.valid_characters = set('CNOSPFBrClIHBSiSeAsMgCaNaK[]()=+\\-#@/1234567890cnops')
-        
-        # Dangerous patterns to filter out
-        self.dangerous_patterns = [
-            r'<script.*?>',
-            r'javascript:',
-            r'data:',
-            r'vbscript:',
-            r'<iframe.*?>',
-            r'<object.*?>',
-            r'<embed.*?>',
-        ]
-    
-    def validate_smiles(self, smiles: str) -> ValidationResult:
-        """Validate SMILES string using basic rules."""
-        if not smiles or not isinstance(smiles, str):
-            return ValidationResult(False, ['Empty or invalid SMILES'], [])
-        
+    def validate_molecule_data(self, smiles: str, confidence: float = None) -> ValidationResult:
+        """Validate molecule data comprehensively."""
         errors = []
         warnings = []
         
-        # Basic character validation
-        invalid_chars = set(smiles) - self.valid_characters
-        if invalid_chars:
-            errors.append(f"Invalid characters: {', '.join(invalid_chars)}")
+        # SMILES validation
+        if not isinstance(smiles, str):
+            errors.append(f"SMILES must be string, got {type(smiles)}")
+        elif not smiles.strip():
+            errors.append("SMILES cannot be empty")
+        elif len(smiles) > 1000:
+            errors.append("SMILES too long (>1000 characters)")
+        elif not self.smiles_pattern.match(smiles):
+            errors.append(f"Invalid SMILES characters: {smiles}")
         
-        # Bracket matching
-        if not self._check_brackets(smiles):
-            errors.append("Unmatched brackets in SMILES")
+        # Confidence validation
+        if confidence is not None:
+            if not isinstance(confidence, (int, float)):
+                errors.append(f"Confidence must be numeric, got {type(confidence)}")
+            elif not 0.0 <= confidence <= 1.0:
+                errors.append(f"Confidence must be between 0.0 and 1.0, got {confidence}")
+            elif confidence < 0.5:
+                warnings.append(f"Low confidence score: {confidence}")
         
-        # Basic structural checks
-        if smiles.count('=') > len(smiles) // 3:
-            warnings.append("Unusually high number of double bonds")
-        
-        if smiles.count('#') > len(smiles) // 5:
-            warnings.append("Unusually high number of triple bonds")
-        
-        # Ring closure validation
-        if not self._check_ring_closures(smiles):
-            errors.append("Invalid ring closure numbers")
-        
-        # Length validation
-        if len(smiles) > 200:
-            warnings.append("Very long SMILES string")
-        elif len(smiles) < 2:
-            errors.append("SMILES string too short")
-        
-        confidence = 0.8 if warnings else 0.95
-        return ValidationResult(len(errors) == 0, errors, warnings, confidence)
+        return ValidationResult(
+            is_valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
     
-    def _check_brackets(self, smiles: str) -> bool:
-        """Check if brackets are properly matched."""
-        stack = []
-        bracket_pairs = {'(': ')', '[': ']'}
-        
-        for char in smiles:
-            if char in bracket_pairs:
-                stack.append(char)
-            elif char in bracket_pairs.values():
-                if not stack:
-                    return False
-                last = stack.pop()
-                if bracket_pairs.get(last) != char:
-                    return False
-        
-        return len(stack) == 0
-    
-    def _check_ring_closures(self, smiles: str) -> bool:
-        """Check ring closure number validity."""
-        import re
-        
-        # Find all ring closure numbers
-        ring_numbers = re.findall(r'[0-9]', smiles)
-        
-        # Each ring number should appear exactly twice
-        for num in set(ring_numbers):
-            if ring_numbers.count(num) != 2:
-                return False
-        
-        return True
-    
-    def validate_molecule_properties(self, properties: Dict[str, Any]) -> ValidationResult:
-        """Validate molecular properties."""
+    def validate_generation_prompt(self, prompt: str) -> ValidationResult:
+        """Validate text prompt for molecule generation."""
         errors = []
         warnings = []
         
-        # Molecular weight validation
-        mw = properties.get('molecular_weight', 0)
-        if mw and (mw < 10 or mw > 1000):
-            if mw < 10:
-                errors.append("Molecular weight too low")
-            else:
-                warnings.append("High molecular weight")
-        
-        # LogP validation
-        logp = properties.get('logP', 0)
-        if logp and (logp < -5 or logp > 10):
-            warnings.append("LogP value outside typical range")
-        
-        # TPSA validation
-        tpsa = properties.get('tpsa', 0)
-        if tpsa and tpsa > 200:
-            warnings.append("High topological polar surface area")
-        
-        return ValidationResult(len(errors) == 0, errors, warnings)
-    
-    def sanitize_input(self, text: str) -> str:
-        """Sanitize input text for security."""
-        if not isinstance(text, str):
-            return str(text)
-        
-        # Remove dangerous patterns
-        sanitized = text
-        for pattern in self.dangerous_patterns:
-            sanitized = re.sub(pattern, '', sanitized, flags=re.IGNORECASE)
-        
-        # Remove control characters
-        sanitized = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', sanitized)
-        
-        # Limit length
-        if len(sanitized) > 1000:
-            sanitized = sanitized[:1000]
-        
-        return sanitized.strip()
-    
-    def validate_prompt(self, prompt: str) -> ValidationResult:
-        """Validate user prompt for molecule generation."""
-        if not prompt or not isinstance(prompt, str):
-            return ValidationResult(False, ['Empty prompt'], [])
-        
-        errors = []
-        warnings = []
-        
-        # Length validation
-        if len(prompt) < 3:
-            errors.append("Prompt too short")
+        if not isinstance(prompt, str):
+            errors.append(f"Prompt must be string, got {type(prompt)}")
+        elif not prompt.strip():
+            errors.append("Prompt cannot be empty")
+        elif len(prompt) < 5:
+            warnings.append("Very short prompt may not generate good results")
         elif len(prompt) > 500:
-            warnings.append("Very long prompt - may affect generation quality")
+            warnings.append("Very long prompt may be truncated")
         
-        # Content validation
-        sanitized = self.sanitize_input(prompt)
-        if len(sanitized) < len(prompt) * 0.8:
-            warnings.append("Prompt contained potentially unsafe content")
+        # Check for potentially harmful content
+        harmful_keywords = ['toxic', 'explosive', 'poison', 'dangerous', 'illegal']
+        if any(keyword in prompt.lower() for keyword in harmful_keywords):
+            errors.append("Prompt contains potentially harmful content")
         
-        # Check for reasonable content
-        if not any(c.isalpha() for c in sanitized):
-            errors.append("Prompt must contain alphabetic characters")
+        return ValidationResult(
+            is_valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
+    
+    def validate_safety_parameters(self, params: Dict[str, Any]) -> ValidationResult:
+        """Validate safety filter parameters."""
+        errors = []
+        warnings = []
         
-        return ValidationResult(len(errors) == 0, errors, warnings)
-
+        required_params = ['toxicity_threshold']
+        for param in required_params:
+            if param not in params:
+                errors.append(f"Missing required safety parameter: {param}")
+        
+        if 'toxicity_threshold' in params:
+            threshold = params['toxicity_threshold']
+            if not isinstance(threshold, (int, float)):
+                errors.append(f"Toxicity threshold must be numeric, got {type(threshold)}")
+            elif not 0.0 <= threshold <= 1.0:
+                errors.append(f"Toxicity threshold must be between 0.0 and 1.0")
+            elif threshold > 0.5:
+                warnings.append("High toxicity threshold may allow unsafe molecules")
+        
+        return ValidationResult(
+            is_valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
+    
+    def validate_synthesis_parameters(self, params: Dict[str, Any]) -> ValidationResult:
+        """Validate synthesis planning parameters."""
+        errors = []
+        warnings = []
+        
+        if 'max_steps' in params:
+            max_steps = params['max_steps']
+            if not isinstance(max_steps, int):
+                errors.append(f"max_steps must be integer, got {type(max_steps)}")
+            elif max_steps <= 0:
+                errors.append("max_steps must be positive")
+            elif max_steps > 10:
+                warnings.append("High max_steps may result in complex synthesis")
+        
+        if 'starting_materials' in params:
+            materials = params['starting_materials']
+            if materials not in ['commercial', 'basic', 'any']:
+                errors.append(f"Invalid starting_materials: {materials}")
+        
+        return ValidationResult(
+            is_valid=len(errors) == 0,
+            errors=errors,
+            warnings=warnings
+        )
 
 # Global validator instance
-_validator = None
+validator = ComprehensiveValidator()
 
-def get_validator() -> FallbackValidator:
-    """Get global validator instance."""
-    global _validator
-    if _validator is None:
-        _validator = FallbackValidator()
-    return _validator
-
-
-# Convenience functions
-def validate_smiles(smiles: str) -> ValidationResult:
-    """Validate SMILES string."""
-    return get_validator().validate_smiles(smiles)
-
-
-def validate_molecule_properties(properties: Dict[str, Any]) -> ValidationResult:
-    """Validate molecular properties."""
-    return get_validator().validate_molecule_properties(properties)
-
-
-def sanitize_input(text: str) -> str:
-    """Sanitize input text."""
-    return get_validator().sanitize_input(text)
-
-
-def validate_prompt(prompt: str) -> ValidationResult:
-    """Validate generation prompt."""
-    return get_validator().validate_prompt(prompt)
+def validate_and_log(data: Any, validation_func: callable, operation_name: str) -> ValidationResult:
+    """Validate data and log results."""
+    result = validation_func(data)
+    
+    if result.has_errors:
+        logger.error(f"{operation_name} validation failed: {result.errors}")
+    
+    if result.has_warnings:
+        logger.warning(f"{operation_name} validation warnings: {result.warnings}")
+    
+    if result.is_valid:
+        logger.info(f"{operation_name} validation passed")
+    
+    return result
